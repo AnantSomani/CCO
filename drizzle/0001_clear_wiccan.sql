@@ -1,0 +1,1 @@
+ALTER TABLE "workspaces" ADD COLUMN "slack_team_name" text NOT NULL;

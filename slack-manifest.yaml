@@ -16,18 +16,17 @@ features:
     always_online: true
   slash_commands:
     - command: /confetti
-      url: ${APP_BASE_URL}/api/slack/commands
+      url: https://telescope-fellowship-birth-brief.trycloudflare.com/api/slack/commands
       description: Manage Confetti settings (channel, budget, opt-outs)
       usage_hint: "[setup|channel|budget|opt-outs|help]"
       should_escape: false
 
 oauth_config:
   redirect_urls:
-    - ${APP_BASE_URL}/api/slack/oauth_callback
+    - https://telescope-fellowship-birth-brief.trycloudflare.com/api/slack/oauth_callback
   scopes:
     bot:
       - chat:write
-      - chat:write.public
       - channels:read
       - groups:read
       - commands
@@ -38,13 +37,13 @@ oauth_config:
 
 settings:
   event_subscriptions:
-    request_url: ${APP_BASE_URL}/api/slack/events
+    request_url: https://telescope-fellowship-birth-brief.trycloudflare.com/api/slack/events
     bot_events:
       - message.im
       - app_uninstalled
   interactivity:
     is_enabled: true
-    request_url: ${APP_BASE_URL}/api/slack/interactivity
+    request_url: https://telescope-fellowship-birth-brief.trycloudflare.com/api/slack/interactivity
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

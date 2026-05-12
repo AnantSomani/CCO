@@ -104,6 +104,7 @@ Seven tables. Implemented in Drizzle at `src/db/schema.ts`.
 ```
 id                       uuid pk default gen_random_uuid()
 slack_team_id            text not null unique         -- natural key for OAuth upserts
+slack_team_name          text not null                -- cached at install; refreshed on reinstall
 bot_access_token_enc     text not null                -- encrypted
 installed_by_slack_user  text not null
 celebration_channel_id   text                         -- nullable until set
@@ -388,8 +389,7 @@ All access through `src/lib/env.ts`, which validates with Zod at startup. Never 
 The Slack app is created at api.slack.com using `slack-manifest.yaml` at the repo root. Required scopes:
 
 **Bot token scopes:**
-- `chat:write` — post messages and DMs
-- `chat:write.public` — post to public channels without joining
+- `chat:write` — post messages and DMs (only in channels the bot has been invited to)
 - `channels:read` — list channels for settings
 - `groups:read` — list private channels for settings
 - `commands` — slash commands

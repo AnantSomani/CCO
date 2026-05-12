@@ -1,4 +1,4 @@
-import { drizzle } from 'drizzle-orm/postgres-js';
+import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { env } from '../lib/env';
 import * as schema from './schema';
@@ -8,4 +8,6 @@ import * as schema from './schema';
 // prepared statements. drizzle-kit migrations use DIRECT_URL instead.
 const queryClient = postgres(env.DATABASE_URL, { prepare: false });
 
-export const db = drizzle(queryClient, { schema });
+export type Db = PostgresJsDatabase<typeof schema>;
+
+export const db: Db = drizzle(queryClient, { schema });

@@ -18,6 +18,7 @@ import {
 export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey().defaultRandom(),
   slackTeamId: text('slack_team_id').notNull().unique(),
+  slackTeamName: text('slack_team_name').notNull(),
   botAccessTokenEnc: text('bot_access_token_enc').notNull(),
   installedBySlackUser: text('installed_by_slack_user').notNull(),
   celebrationChannelId: text('celebration_channel_id'),
