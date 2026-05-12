@@ -1,5 +1,6 @@
 import { serve } from 'inngest/next';
 import { inngest } from '@/jobs/client';
+import { dailyScan } from '@/jobs/daily-scan';
 
 // Placeholder function so the Inngest dev UI has something to display.
 // Trigger from the dev UI or by emitting `confetti/placeholder.hello`.
@@ -16,5 +17,5 @@ const placeholderHello = inngest.createFunction(
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [placeholderHello],
+  functions: [placeholderHello, dailyScan],
 });

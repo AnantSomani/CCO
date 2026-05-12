@@ -13,12 +13,16 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "scan": "tsx scripts/scan.ts"
   },
   "dependencies": {
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
     "drizzle-orm": "^0.45.2",
     "inngest": "^4.4.0",
     "next": "15.5.18",
+    "papaparse": "^5.5.3",
     "postgres": "^3.4.9",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -28,10 +32,12 @@
     "@biomejs/biome": "^2.4.15",
     "@electric-sql/pglite": "^0.4.5",
     "@types/node": "^20",
+    "@types/papaparse": "^5.5.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
+    "tsx": "^4.21.0",
     "typescript": "^5",
     "vitest": "^4.1.6"
   }

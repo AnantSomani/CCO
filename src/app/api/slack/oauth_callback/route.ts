@@ -4,6 +4,7 @@ import { upsertUser } from '@/db/queries/users';
 import { upsertWorkspace } from '@/db/queries/workspaces';
 import { env } from '@/lib/env';
 import { log } from '@/lib/log';
+import { COOKIE_MAX_AGE_SECONDS, signUploadCookie, UPLOAD_COOKIE_NAME } from '@/lib/upload-cookie';
 import { oauthAccessSchema, oauthCallbackSchema } from '@/slack/schemas';
 import { verifyState } from '@/slack/state';
 
@@ -91,12 +92,21 @@ export const GET = async (req: NextRequest): Promise<NextResponse> => {
     installedBy: oauth.authed_user.id,
   });
 
-  return htmlResponse(
+  const response = htmlResponse(
     200,
     `<html><body style="font-family:sans-serif;padding:3rem;max-width:640px;margin:0 auto;line-height:1.5">
       <h1>🎉 Installed</h1>
-      <p>Confetti is now in <strong>${escapeHtml(oauth.team.name)}</strong>. You can close this tab and head back to Slack.</p>
-      <p style="color:#666;font-size:0.9rem">Try <code>/confetti hello</code> in any channel to confirm.</p>
+      <p>Confetti is now in <strong>${escapeHtml(oauth.team.name)}</strong>.</p>
+      <p><a href="/upload" style="display:inline-block;padding:0.6rem 1rem;background:#4a154b;color:#fff;text-decoration:none;border-radius:4px">Upload your team CSV →</a></p>
+      <p style="color:#666;font-size:0.9rem">Or try <code>/confetti hello</code> in any channel.</p>
     </body></html>`,
   );
+  response.cookies.set(UPLOAD_COOKIE_NAME, signUploadCookie(workspace.id, oauth.team.id), {
+    httpOnly: true,
+    secure: env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: COOKIE_MAX_AGE_SECONDS,
+    path: '/',
+  });
+  return response;
 };

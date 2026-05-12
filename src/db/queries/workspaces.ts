@@ -101,3 +101,18 @@ export const getWorkspaceBotAccessToken = async (
   if (!row) return null;
   return decrypt(row.enc);
 };
+
+// Lightweight projection used by the daily scan loop — token + tokens-shaped
+// fields excluded.
+export type WorkspaceListItem = { id: string; slackTeamId: string; timezone: string };
+
+export const listAllWorkspaces = async (db: Db): Promise<WorkspaceListItem[]> => {
+  const rows = await db
+    .select({
+      id: workspaces.id,
+      slackTeamId: workspaces.slackTeamId,
+      timezone: workspaces.timezone,
+    })
+    .from(workspaces);
+  return rows;
+};
