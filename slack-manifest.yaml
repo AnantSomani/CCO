@@ -4,26 +4,27 @@
 # replace every `${APP_BASE_URL}` below with your real public URL
 # (e.g. https://confetti.vercel.app or your ngrok tunnel for local dev).
 # Slack does not interpolate env vars in this file.
-
 display_information:
   name: Confetti
   description: Quietly runs the joyful parts of your team's culture — birthdays and anniversaries.
   background_color: "#6E40C9"
-
 features:
   bot_user:
     display_name: Confetti
     always_online: true
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
   slash_commands:
     - command: /confetti
-      url: https://telescope-fellowship-birth-brief.trycloudflare.com/api/slack/commands
+      url: https://confetti-dev.anantsomani.com/api/slack/commands
       description: Manage Confetti settings (channel, budget, opt-outs)
       usage_hint: "[setup|channel|budget|opt-outs|help]"
       should_escape: false
-
 oauth_config:
   redirect_urls:
-    - https://telescope-fellowship-birth-brief.trycloudflare.com/api/slack/oauth_callback
+    - https://confetti-dev.anantsomani.com/api/slack/oauth_callback
   scopes:
     bot:
       - chat:write
@@ -34,16 +35,15 @@ oauth_config:
       - users:read.email
       - im:history
       - im:write
-
 settings:
   event_subscriptions:
-    request_url: https://telescope-fellowship-birth-brief.trycloudflare.com/api/slack/events
+    request_url: https://confetti-dev.anantsomani.com/api/slack/events
     bot_events:
       - message.im
       - app_uninstalled
   interactivity:
     is_enabled: true
-    request_url: https://telescope-fellowship-birth-brief.trycloudflare.com/api/slack/interactivity
+    request_url: https://confetti-dev.anantsomani.com/api/slack/interactivity
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

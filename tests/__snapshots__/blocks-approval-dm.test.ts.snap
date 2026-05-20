@@ -1,0 +1,139 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildApprovalDM > builds a birthday DM with header, context, suggestions and action buttons 1`] = `
+[
+  {
+    "text": {
+      "text": "🎂 Alice Park's birthday is in 7 days",
+      "type": "plain_text",
+    },
+    "type": "header",
+  },
+  {
+    "elements": [
+      {
+        "text": "Engineer · Platform",
+        "type": "mrkdwn",
+      },
+    ],
+    "type": "context",
+  },
+  {
+    "text": {
+      "text": "• *Card from team + $30 gift card*  _$45_",
+      "type": "mrkdwn",
+    },
+    "type": "section",
+  },
+  {
+    "text": {
+      "text": "• *Surprise cake at standup*  _$65_",
+      "type": "mrkdwn",
+    },
+    "type": "section",
+  },
+  {
+    "elements": [
+      {
+        "action_id": "approve_event",
+        "style": "primary",
+        "text": {
+          "text": "Approve",
+          "type": "plain_text",
+        },
+        "type": "button",
+        "value": "{"eventId":"evt_b","suggestionId":"sug_1"}",
+      },
+      {
+        "action_id": "modify_event",
+        "text": {
+          "text": "Modify",
+          "type": "plain_text",
+        },
+        "type": "button",
+        "value": "{"eventId":"evt_b"}",
+      },
+      {
+        "action_id": "skip_event",
+        "style": "danger",
+        "text": {
+          "text": "Skip",
+          "type": "plain_text",
+        },
+        "type": "button",
+        "value": "{"eventId":"evt_b"}",
+      },
+    ],
+    "type": "actions",
+  },
+]
+`;
+
+exports[`buildApprovalDM > builds an anniversary DM with years in the header 1`] = `
+[
+  {
+    "text": {
+      "text": "🎉 Alice Park's 3-year anniversary is in 14 days",
+      "type": "plain_text",
+    },
+    "type": "header",
+  },
+  {
+    "elements": [
+      {
+        "text": "Engineer · Platform",
+        "type": "mrkdwn",
+      },
+    ],
+    "type": "context",
+  },
+  {
+    "text": {
+      "text": "• *Card from team + $30 gift card*  _$45_",
+      "type": "mrkdwn",
+    },
+    "type": "section",
+  },
+  {
+    "text": {
+      "text": "• *Surprise cake at standup*  _$65_",
+      "type": "mrkdwn",
+    },
+    "type": "section",
+  },
+  {
+    "elements": [
+      {
+        "action_id": "approve_event",
+        "style": "primary",
+        "text": {
+          "text": "Approve",
+          "type": "plain_text",
+        },
+        "type": "button",
+        "value": "{"eventId":"evt_a","suggestionId":"sug_1"}",
+      },
+      {
+        "action_id": "modify_event",
+        "text": {
+          "text": "Modify",
+          "type": "plain_text",
+        },
+        "type": "button",
+        "value": "{"eventId":"evt_a"}",
+      },
+      {
+        "action_id": "skip_event",
+        "style": "danger",
+        "text": {
+          "text": "Skip",
+          "type": "plain_text",
+        },
+        "type": "button",
+        "value": "{"eventId":"evt_a"}",
+      },
+    ],
+    "type": "actions",
+  },
+]
+`;

@@ -112,6 +112,50 @@ export const findBirthdayCandidates = async (
   return rows.map(toPerson);
 };
 
+export const findPersonBySlackUserId = async (
+  db: Db,
+  workspaceId: string,
+  slackUserId: string,
+): Promise<Person | null> => {
+  const rows = await db
+    .select()
+    .from(people)
+    .where(and(eq(people.workspaceId, workspaceId), eq(people.slackUserId, slackUserId)))
+    .limit(1);
+  const row = rows[0];
+  return row ? toPerson(row) : null;
+};
+
+// Toggles opted_out for a person matched by slack_user_id. Returns the new
+// state, or null if no matching person exists (e.g. admin DMs us but their
+// email isn't on the roster yet). Treats "no match" distinctly from "no
+// change" so the message handler can reply appropriately.
+export const setOptedOutBySlackUser = async (
+  db: Db,
+  workspaceId: string,
+  slackUserId: string,
+  optedOut: boolean,
+): Promise<{ personId: string; name: string } | null> => {
+  const rows = await db
+    .update(people)
+    .set({ optedOut, updatedAt: new Date() })
+    .where(and(eq(people.workspaceId, workspaceId), eq(people.slackUserId, slackUserId)))
+    .returning({ id: people.id, name: people.name });
+  const row = rows[0];
+  return row ? { personId: row.id, name: row.name } : null;
+};
+
+export const listOptedOut = async (
+  db: Db,
+  workspaceId: string,
+): Promise<Array<{ name: string; email: string }>> => {
+  const rows = await db
+    .select({ name: people.name, email: people.email })
+    .from(people)
+    .where(and(eq(people.workspaceId, workspaceId), eq(people.optedOut, true)));
+  return rows;
+};
+
 // Anniversary candidates: month/day match AND start_date strictly before today
 // (someone who started today is not yet at their first anniversary). Both
 // filters at the query layer so callers can't forget the start_date < today

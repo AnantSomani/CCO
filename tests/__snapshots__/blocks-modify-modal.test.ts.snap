@@ -1,0 +1,62 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildModifyModal > builds a modal with callback_id, private_metadata, gesture + budget inputs 1`] = `
+{
+  "blocks": [
+    {
+      "elements": [
+        {
+          "text": "Birthday for Alice Park",
+          "type": "mrkdwn",
+        },
+      ],
+      "type": "context",
+    },
+    {
+      "block_id": "modify_gesture_block",
+      "element": {
+        "action_id": "gesture_input",
+        "initial_value": "Card from team + $30 gift card",
+        "max_length": 500,
+        "multiline": true,
+        "type": "plain_text_input",
+      },
+      "label": {
+        "text": "Gesture",
+        "type": "plain_text",
+      },
+      "type": "input",
+    },
+    {
+      "block_id": "modify_budget_block",
+      "element": {
+        "action_id": "budget_input",
+        "initial_value": "50",
+        "is_decimal_allowed": true,
+        "min_value": "0",
+        "type": "number_input",
+      },
+      "label": {
+        "text": "Budget (USD)",
+        "type": "plain_text",
+      },
+      "type": "input",
+    },
+  ],
+  "callback_id": "modify_gesture",
+  "close": {
+    "text": "Cancel",
+    "type": "plain_text",
+  },
+  "private_metadata": "{"eventId":"evt_b","channel":"D1","ts":"111.222"}",
+  "submit": {
+    "text": "Save",
+    "type": "plain_text",
+  },
+  "title": {
+    "text": "Modify gesture",
+    "type": "plain_text",
+  },
+  "type": "modal",
+}
+`;

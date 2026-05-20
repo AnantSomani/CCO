@@ -15,6 +15,13 @@
       "when": 1778609765070,
       "tag": "0001_clear_wiccan",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779136458658,
+      "tag": "0002_stale_rockslide",
+      "breakpoints": true
     }
   ]
 }

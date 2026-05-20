@@ -1,0 +1,34 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildCelebrationPost > includes the gesture as a context block when customGestureText is provided 1`] = `
+[
+  {
+    "text": {
+      "text": "🎉 Happy birthday, <@U1>! Sending you a great day from the whole team.",
+      "type": "mrkdwn",
+    },
+    "type": "section",
+  },
+  {
+    "elements": [
+      {
+        "text": "From the team: _Send them flowers_",
+        "type": "mrkdwn",
+      },
+    ],
+    "type": "context",
+  },
+]
+`;
+
+exports[`buildCelebrationPost > omits the gesture context block when neither custom nor suggestion is provided 1`] = `
+[
+  {
+    "text": {
+      "text": "🎉 Happy birthday, <@U1>! Sending you a great day from the whole team.",
+      "type": "mrkdwn",
+    },
+    "type": "section",
+  },
+]
+`;

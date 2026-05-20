@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Db } from '@/db/client';
-import { workspaces } from '@/db/schema';
+import { users, workspaces } from '@/db/schema';
 import { decrypt, encrypt } from '@/lib/crypto';
 
 // Plain (no-Drizzle-types) shape returned to callers. `botAccessTokenEnc` is
@@ -115,4 +115,43 @@ export const listAllWorkspaces = async (db: Db): Promise<WorkspaceListItem[]> =>
     })
     .from(workspaces);
   return rows;
+};
+
+// v1: one admin per workspace (the installer). The table supports more
+// (PROJECT.md), so we pick the first is_admin=true row deterministically by
+// createdAt. The generate-suggestions job DMs this user.
+export const getAdminUser = async (
+  db: Db,
+  workspaceId: string,
+): Promise<{ id: string; slackUserId: string } | null> => {
+  const rows = await db
+    .select({ id: users.id, slackUserId: users.slackUserId })
+    .from(users)
+    .where(and(eq(users.workspaceId, workspaceId), eq(users.isAdmin, true)))
+    .orderBy(users.createdAt)
+    .limit(1);
+  const row = rows[0];
+  return row ?? null;
+};
+
+export const setCelebrationChannel = async (
+  db: Db,
+  workspaceId: string,
+  channelId: string,
+): Promise<void> => {
+  await db
+    .update(workspaces)
+    .set({ celebrationChannelId: channelId, updatedAt: new Date() })
+    .where(eq(workspaces.id, workspaceId));
+};
+
+export const setDefaultBudget = async (
+  db: Db,
+  workspaceId: string,
+  cents: number,
+): Promise<void> => {
+  await db
+    .update(workspaces)
+    .set({ defaultBudgetCents: cents, updatedAt: new Date() })
+    .where(eq(workspaces.id, workspaceId));
 };

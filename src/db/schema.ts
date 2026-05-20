@@ -93,6 +93,10 @@ export const events = pgTable(
     eventDate: date('event_date').notNull(),
     years: integer('years'),
     status: text('status').notNull().default('pending'),
+    // Slack channel + ts of the approval DM. Stashed when the DM is sent so
+    // action handlers can chat.update in place. Both null until the DM goes out.
+    approvalDmChannelId: text('approval_dm_channel_id'),
+    approvalDmTs: text('approval_dm_ts'),
     detectedAt: timestamp('detected_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

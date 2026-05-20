@@ -6,6 +6,7 @@ import { upsertWorkspace } from '@/db/queries/workspaces';
 import { events, people, workspaces } from '@/db/schema';
 import { runDailyScan } from '@/jobs/daily-scan';
 import { type CalendarDate, todayInWorkspaceTz } from '@/lib/dates';
+import { EVENT_NAME_EVENT_CREATED } from '@/slack/ids';
 import { createTestDb } from './db';
 
 const TODAY: CalendarDate = { year: 2026, month: 5, day: 12 };
@@ -155,6 +156,35 @@ describe('runDailyScan', () => {
     expect(r1[0]?.created).toBe(1);
     expect(r2[0]?.created).toBe(0);
     expect(await db.select().from(events).where(eq(events.workspaceId, wsId))).toHaveLength(1);
+  });
+
+  it('emits confetti/event.created only for newly-created events', async () => {
+    const db = await createTestDb();
+    const wsId = await seedWorkspace(db);
+    await upsertPeople(db, wsId, [
+      {
+        name: 'A',
+        email: 'a@x.com',
+        birthdayMonth: 5,
+        birthdayDay: 19,
+        startDate: null,
+        team: null,
+        role: null,
+      },
+    ]);
+    const sent: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const emitter = {
+      send: async (e: { name: string; data: Record<string, unknown> }) => {
+        sent.push(e);
+        return undefined;
+      },
+    };
+    await runDailyScan({ db, log: noopLog, todayFor: pinned(TODAY), emitter });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.name).toBe(EVENT_NAME_EVENT_CREATED);
+    // Second run: no new events, no new emits.
+    await runDailyScan({ db, log: noopLog, todayFor: pinned(TODAY), emitter });
+    expect(sent).toHaveLength(1);
   });
 
   it('evaluates "today" in workspace tz, not UTC', async () => {

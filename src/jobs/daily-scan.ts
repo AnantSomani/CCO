@@ -4,7 +4,14 @@ import { findAnniversaryCandidates, findBirthdayCandidates } from '@/db/queries/
 import { listAllWorkspaces, type WorkspaceListItem } from '@/db/queries/workspaces';
 import { type CalendarDate, todayInWorkspaceTz } from '@/lib/dates';
 import { log as defaultLog } from '@/lib/log';
+import { EVENT_NAME_EVENT_CREATED } from '@/slack/ids';
 import { inngest } from './client';
+
+// Tiny structural type — accepts the real Inngest client and a recording stub
+// from tests. Only the `send` shape matters here.
+type EventEmitter = {
+  send: (event: { name: string; data: Record<string, unknown> }) => Promise<unknown>;
+};
 
 // Calendar-date arithmetic via UTC. DST-safe by construction (UTC has no DST),
 // and target dates are pure (year, month, day) tuples so workspace-local
@@ -29,6 +36,10 @@ type RunArgs = {
   log?: Logger;
   // Pinned in tests; production passes the real clock per-workspace tz.
   todayFor?: (ws: WorkspaceListItem) => CalendarDate;
+  // Optional event emitter — when provided, daily-scan emits a
+  // `confetti/event.created` event per newly-created row so the
+  // generate-suggestions job picks it up. Tests pass a recording stub.
+  emitter?: EventEmitter;
 };
 
 export type DailyScanSummary = {
@@ -42,6 +53,7 @@ export const runDailyScan = async ({
   db,
   log = defaultLog,
   todayFor = (ws) => todayInWorkspaceTz(ws.timezone),
+  emitter,
 }: RunArgs): Promise<DailyScanSummary[]> => {
   const workspaces = await listAllWorkspaces(db);
   const summaries: DailyScanSummary[] = [];
@@ -92,6 +104,20 @@ export const runDailyScan = async ({
 
     const created = await findOrCreateEvents(db, candidates);
 
+    // Fire one confetti/event.created per newly-created event so
+    // generate-suggestions picks it up. Skipped when no emitter is wired
+    // (tests not exercising the queue path).
+    if (emitter && created.length > 0) {
+      await Promise.all(
+        created.map((e) =>
+          emitter.send({
+            name: EVENT_NAME_EVENT_CREATED,
+            data: { eventId: e.id, workspaceId: e.workspaceId },
+          }),
+        ),
+      );
+    }
+
     log.info('daily scan complete', {
       workspaceId: ws.id,
       candidates: candidates.length,
@@ -120,7 +146,7 @@ export const dailyScan = inngest.createFunction(
   },
   async () => {
     const { db } = await import('@/db/client');
-    const summaries = await runDailyScan({ db });
+    const summaries = await runDailyScan({ db, emitter: inngest });
     return { summaries };
   },
 );
