@@ -61,6 +61,16 @@ export const recordingSlackClientFactory = (recorder: RecordingSlackClient): Get
       if (recorder.conversationsInfoResult) return recorder.conversationsInfoResult;
       return ok({ id: channel, name: 'stub', is_member: true });
     },
+    usersInfo: async (slackUserId) => {
+      return ok({
+        id: slackUserId,
+        name: null,
+        realName: null,
+        title: null,
+        pronouns: null,
+        timezone: null,
+      });
+    },
   };
 
   return async () => ok(client);

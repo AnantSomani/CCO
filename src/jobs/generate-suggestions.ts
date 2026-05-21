@@ -1,5 +1,11 @@
-import { generateHardcodedSuggestions } from '@/agent/hardcoded';
+import {
+  getAnthropicClient as defaultGetAnthropicClient,
+  type GetAnthropicClient,
+} from '@/agent/anthropic-client';
+import { runAgent as defaultRunAgent, type RunAgentArgs } from '@/agent/index';
+import { appendAgentRunLog } from '@/agent/logging';
 import type { Db } from '@/db/client';
+import { listRecentApprovedGestures } from '@/db/queries/approvals';
 import { getEventForApproval, setEventApprovalMessage } from '@/db/queries/events';
 import { insertSuggestions } from '@/db/queries/suggestions';
 import { getAdminUser } from '@/db/queries/workspaces';
@@ -10,11 +16,21 @@ import type { GetSlackClient } from '@/slack/client';
 import { EVENT_NAME_EVENT_CREATED } from '@/slack/ids';
 import { inngest } from './client';
 
-type Logger = { info: (m: string, meta?: Record<string, unknown>) => void };
+type Logger = {
+  info: (m: string, meta?: Record<string, unknown>) => void;
+  warn: (m: string, meta?: Record<string, unknown>) => void;
+  error: (m: string, meta?: Record<string, unknown>) => void;
+};
+
+type AgentRunner = (args: RunAgentArgs) => ReturnType<typeof defaultRunAgent>;
 
 type RunArgs = {
   db: Db;
   getSlackClient: GetSlackClient;
+  // Both are injected so tests can swap in a scripted Anthropic + stub
+  // factory. Production wiring uses the real factory + real runAgent.
+  getAnthropicClient?: GetAnthropicClient;
+  runAgent?: AgentRunner;
   eventId: string;
   log?: Logger;
 };
@@ -23,15 +39,14 @@ type RunResult = {
   suggestionsCreated: number;
   approvalDmTs: string;
   approvalDmChannel: string;
+  usedFallback: boolean;
 };
 
-// Pure runner — injected `getSlackClient` lets tests swap a recording stub.
-// Loads the event, generates 2 hardcoded suggestions, persists them, sends
-// the approval DM to the workspace's admin, then stashes the DM's channel + ts
-// on the event row so action handlers can chat.update in place later.
 export const runGenerateSuggestions = async ({
   db,
   getSlackClient,
+  getAnthropicClient = defaultGetAnthropicClient,
+  runAgent = defaultRunAgent,
   eventId,
   log = defaultLog,
 }: RunArgs): Promise<Result<RunResult, string>> => {
@@ -41,29 +56,73 @@ export const runGenerateSuggestions = async ({
   const { event, person, workspace } = bundle;
 
   // Idempotency guard: if suggestions were already generated for this event,
-  // re-running shouldn't double-DM. Cheapest check is the existing
-  // suggestions count in the bundle.
+  // re-running shouldn't double-DM.
   if (bundle.suggestions.length > 0) {
     log.info('generate-suggestions skipped — suggestions already exist', { eventId });
     return ok({
       suggestionsCreated: 0,
       approvalDmTs: event.approvalDmTs ?? '',
       approvalDmChannel: event.approvalDmChannelId ?? '',
+      usedFallback: false,
     });
   }
 
   const admin = await getAdminUser(db, workspace.id);
   if (!admin) return err(`no admin user for workspace ${workspace.id}`);
 
-  const inputs = generateHardcodedSuggestions({
-    event: { kind: event.kind, years: event.years },
-    person: { name: person.name },
-    workspace: { id: workspace.id, defaultBudgetCents: workspace.defaultBudgetCents },
-  });
-  const created = await insertSuggestions(db, eventId, inputs);
+  // Closure for the recent-gestures tool — agent stays DB-agnostic; this
+  // wiring layer is the only place that touches the DB on its behalf.
+  const recentGesturesProvider = (limit: number) =>
+    listRecentApprovedGestures(db, workspace.id, limit);
 
   const slack = await getSlackClient(workspace.id);
   if (!slack.ok) return err(`slack client unavailable: ${slack.error}`);
+
+  const agentResult = await runAgent({
+    anthropic: getAnthropicClient(),
+    slackClient: slack.value,
+    listRecentGestures: recentGesturesProvider,
+    event: { kind: event.kind, years: event.years },
+    person: {
+      name: person.name,
+      role: person.role,
+      team: person.team,
+      slackUserId: person.slackUserId,
+      startDate: person.startDate,
+    },
+    workspace: {
+      id: workspace.id,
+      defaultBudgetCents: workspace.defaultBudgetCents,
+      teamName: workspace.slackTeamName,
+    },
+    log,
+  });
+
+  if (!agentResult.ok) {
+    log.error('agent precondition failure', { eventId, error: agentResult.error });
+    return err(`agent: ${agentResult.error}`);
+  }
+
+  const created = await insertSuggestions(db, eventId, agentResult.suggestions);
+
+  // JSONL log — fire-and-forget; never blocks suggestion generation.
+  await appendAgentRunLog({
+    ts: new Date().toISOString(),
+    workspace_id: workspace.id,
+    event_id: eventId,
+    kind: event.kind,
+    person_name: person.name,
+    budget_cents: workspace.defaultBudgetCents,
+    rounds: agentResult.rounds,
+    tool_calls: agentResult.toolCalls,
+    final_suggestions: created.map((s) => ({
+      summary: s.gestureSummary,
+      cost_cents: s.estimatedCostCents,
+      rank: s.rank,
+    })),
+    used_fallback: agentResult.usedFallback,
+    ...(agentResult.error ? { error: agentResult.error } : {}),
+  });
 
   const dm = buildApprovalDM({
     event: { id: event.id, kind: event.kind, years: event.years },
@@ -89,12 +148,14 @@ export const runGenerateSuggestions = async ({
     workspaceId: workspace.id,
     adminSlackUserId: admin.slackUserId,
     suggestionsCreated: created.length,
+    usedFallback: agentResult.usedFallback,
   });
 
   return ok({
     suggestionsCreated: created.length,
     approvalDmTs: sent.value.ts,
     approvalDmChannel: sent.value.channel,
+    usedFallback: agentResult.usedFallback,
   });
 };
 

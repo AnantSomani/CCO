@@ -36,11 +36,24 @@ type ConversationsInfoResult = {
   is_member: boolean;
 };
 
+type UsersInfoResult = {
+  id: string;
+  name: string | null;
+  realName: string | null;
+  title: string | null;
+  pronouns: string | null;
+  timezone: string | null;
+};
+
 export type SlackClient = {
   postMessage: (input: PostMessageInput) => Promise<Result<PostMessageResult, string>>;
   chatUpdate: (input: ChatUpdateInput) => Promise<Result<{ ts: string }, string>>;
   viewsOpen: (input: ViewsOpenInput) => Promise<Result<{ viewId: string }, string>>;
   conversationsInfo: (channel: string) => Promise<Result<ConversationsInfoResult, string>>;
+  // Returns extended profile fields for the agent's `get_person_profile` tool.
+  // Implementation uses GET (users.info rejects JSON body the same way
+  // conversations.info does).
+  usersInfo: (slackUserId: string) => Promise<Result<UsersInfoResult, string>>;
 };
 
 export const getSlackClient = async (workspaceId: string): Promise<Result<SlackClient, string>> => {
@@ -129,6 +142,33 @@ export const getSlackClient = async (workspaceId: string): Promise<Result<SlackC
         id: result.value.channel.id,
         name: result.value.channel.name,
         is_member: result.value.channel.is_member,
+      });
+    },
+    usersInfo: async (slackUserId) => {
+      const result = await callGet<{
+        ok: true;
+        user: {
+          id: string;
+          name?: string;
+          real_name?: string;
+          tz?: string;
+          profile?: {
+            title?: string;
+            pronouns?: string;
+            real_name?: string;
+            display_name?: string;
+          };
+        };
+      }>('users.info', { user: slackUserId });
+      if (!result.ok) return result;
+      const u = result.value.user;
+      return ok({
+        id: u.id,
+        name: u.name ?? null,
+        realName: u.profile?.real_name ?? u.real_name ?? null,
+        title: u.profile?.title ?? null,
+        pronouns: u.profile?.pronouns ?? null,
+        timezone: u.tz ?? null,
       });
     },
   });
