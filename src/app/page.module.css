@@ -1,0 +1,519 @@
+.page {
+  background: #f7f4ee;
+  color: #10131f;
+}
+
+.hero {
+  background:
+    radial-gradient(circle at top, rgba(126, 87, 194, 0.22), transparent 32%),
+    linear-gradient(180deg, #0f1020 0%, #090b13 100%);
+  color: #f6f4ff;
+  padding: 28px clamp(24px, 4vw, 48px) 88px;
+}
+
+.nav {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin: 0 auto 56px;
+  max-width: 1180px;
+}
+
+.brand {
+  align-items: center;
+  display: inline-flex;
+  font-size: 1rem;
+  font-weight: 700;
+  gap: 12px;
+  letter-spacing: -0.02em;
+}
+
+.brandMark {
+  background: linear-gradient(135deg, #ff7a59 0%, #ffcd6b 52%, #8f7cff 100%);
+  border-radius: 999px;
+  box-shadow: 0 0 32px rgba(255, 122, 89, 0.35);
+  display: inline-block;
+  height: 14px;
+  width: 14px;
+}
+
+.navLink {
+  color: rgba(246, 244, 255, 0.8);
+  font-size: 0.95rem;
+}
+
+.heroGrid {
+  align-items: center;
+  display: grid;
+  gap: 48px;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  margin: 0 auto;
+  max-width: 1180px;
+}
+
+.heroCopy h1 {
+  font-size: clamp(3rem, 6vw, 5.5rem);
+  letter-spacing: -0.06em;
+  line-height: 0.98;
+  margin-bottom: 20px;
+  max-width: 12ch;
+}
+
+.kicker {
+  color: #c7beff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  margin-bottom: 18px;
+  text-transform: uppercase;
+}
+
+.heroText {
+  color: rgba(246, 244, 255, 0.88);
+  font-size: 1.08rem;
+  line-height: 1.7;
+  max-width: 54ch;
+}
+
+.heroActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 32px;
+}
+
+.primaryButton,
+.secondaryButton {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.98rem;
+  font-weight: 600;
+  justify-content: center;
+  min-width: 156px;
+  padding: 14px 22px;
+  transition:
+    transform 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease;
+}
+
+.primaryButton {
+  background: linear-gradient(135deg, #ff8a5c 0%, #8f7cff 100%);
+  box-shadow: 0 18px 50px rgba(115, 92, 255, 0.28);
+  color: #fff;
+}
+
+.secondaryButton {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #f6f4ff;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.primaryButton:hover,
+.secondaryButton:hover {
+  transform: translateY(-1px);
+}
+
+.heroFootnote {
+  color: rgba(246, 244, 255, 0.66);
+  font-size: 0.95rem;
+  margin-top: 18px;
+}
+
+.heroPanel {
+  position: relative;
+}
+
+.panelGlow {
+  background: linear-gradient(180deg, rgba(143, 124, 255, 0.34), rgba(255, 138, 92, 0.08));
+  filter: blur(36px);
+  inset: 30px;
+  position: absolute;
+  z-index: 0;
+}
+
+.demoCard {
+  backdrop-filter: blur(18px);
+  background: rgba(16, 19, 31, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 30px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+  padding: 24px;
+  position: relative;
+  z-index: 1;
+}
+
+.demoHeader {
+  align-items: center;
+  color: rgba(246, 244, 255, 0.72);
+  display: flex;
+  font-size: 0.9rem;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.demoDot {
+  background: #65e28d;
+  border-radius: 999px;
+  display: inline-block;
+  height: 10px;
+  width: 10px;
+}
+
+.message {
+  display: flex;
+  gap: 12px;
+}
+
+.message + .message {
+  margin-top: 18px;
+}
+
+.avatar {
+  align-items: center;
+  background: linear-gradient(135deg, #ff8a5c 0%, #8f7cff 100%);
+  border-radius: 14px;
+  color: #fff;
+  display: inline-flex;
+  flex: 0 0 36px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  height: 36px;
+  justify-content: center;
+}
+
+.messageContent {
+  flex: 1;
+}
+
+.messageMeta {
+  align-items: baseline;
+  color: rgba(246, 244, 255, 0.66);
+  display: flex;
+  font-size: 0.83rem;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.messageMeta strong {
+  color: #fff;
+}
+
+.messageBody {
+  color: rgba(246, 244, 255, 0.92);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.optionStack {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0;
+  padding-left: 0;
+}
+
+.optionCard {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  display: grid;
+  gap: 4px;
+  margin-left: 48px;
+  padding: 14px 16px;
+}
+
+.optionCard strong {
+  color: #fff;
+}
+
+.optionCard span {
+  color: rgba(246, 244, 255, 0.72);
+  font-size: 0.92rem;
+}
+
+.pillarsSection,
+.storySection,
+.howSection,
+.agentSection,
+.integrationsSection,
+.faqSection,
+.ctaSection {
+  padding: 68px clamp(24px, 4vw, 48px);
+}
+
+.pillarsSection,
+.storySection,
+.howSection,
+.agentSection,
+.faqSection,
+.ctaSection {
+  background: #f7f4ee;
+}
+
+.sectionHeading,
+.storyIntro,
+.agentIntro {
+  margin: 0 auto 24px;
+  max-width: 1180px;
+}
+
+.sectionHeading h2,
+.storyIntro h2,
+.agentIntro h2,
+.ctaCard h2 {
+  color: #10131f;
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  letter-spacing: -0.05em;
+  line-height: 1.06;
+  max-width: 16ch;
+}
+
+.storyIntro h2 {
+  max-width: 14ch;
+}
+
+.sectionLabel {
+  color: #7a5cff;
+  display: inline-block;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+
+.storyIntro p,
+.agentIntro p,
+.ctaCard p,
+.sectionHeading p {
+  color: rgba(16, 19, 31, 0.78);
+  font-size: 1.02rem;
+  line-height: 1.7;
+  margin-top: 16px;
+  max-width: 56ch;
+}
+
+.pillarsGrid,
+.modeGrid,
+.strengthGrid,
+.faqGrid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 auto;
+  max-width: 1180px;
+}
+
+.strengthGrid,
+.faqGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pillarCard,
+.modeCard,
+.strengthCard,
+.faqCard,
+.storyCard {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(16, 19, 31, 0.1);
+  border-radius: 28px;
+  box-shadow: 0 18px 48px rgba(17, 19, 28, 0.08);
+  padding: 24px;
+}
+
+.cardEyebrow,
+.storyNumber,
+.modeNumber {
+  color: #8b6dff;
+  display: inline-block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-bottom: 16px;
+  text-transform: uppercase;
+}
+
+.pillarCard h3,
+.storyCard h3,
+.modeCard h3,
+.strengthCard h3,
+.faqCard h3 {
+  font-size: 1.3rem;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin-bottom: 12px;
+}
+
+.pillarCard p,
+.storyCard p,
+.modeCard p,
+.strengthCard p,
+.faqCard p {
+  color: rgba(16, 19, 31, 0.8);
+  line-height: 1.65;
+}
+
+.storyGrid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 auto;
+  max-width: 1180px;
+}
+
+.activityGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.activityPill {
+  background: #ece4ff;
+  border-radius: 999px;
+  color: #392593;
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 10px 14px;
+}
+
+.compactList {
+  color: rgba(16, 19, 31, 0.74);
+  display: grid;
+  gap: 8px;
+  line-height: 1.55;
+  margin-top: 18px;
+  padding-left: 18px;
+}
+
+.tripCard {
+  background: linear-gradient(180deg, #10131f 0%, #191d31 100%);
+  border-radius: 22px;
+  color: #f6f4ff;
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 18px;
+}
+
+.tripCard > div {
+  display: grid;
+  gap: 4px;
+}
+
+.tripCard strong {
+  display: block;
+}
+
+.tripCard span {
+  display: block;
+}
+
+.tripCard span,
+.tripCard p {
+  color: rgba(246, 244, 255, 0.84);
+}
+
+.integrationsSection {
+  background: #111422;
+}
+
+.integrationsSection .sectionHeading h2,
+.integrationsSection .sectionLabel {
+  color: #f6f4ff;
+}
+
+.integrationsSection .sectionHeading {
+  margin-bottom: 28px;
+}
+
+.integrationGrid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 auto;
+  max-width: 1180px;
+}
+
+.integrationCard {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  color: rgba(246, 244, 255, 0.94);
+  display: flex;
+  font-weight: 600;
+  justify-content: center;
+  min-height: 74px;
+  padding: 16px;
+  text-align: center;
+}
+
+.ctaSection {
+  padding-bottom: 88px;
+}
+
+.ctaCard {
+  background: linear-gradient(135deg, #fff2df 0%, #f4efff 50%, #edf7ff 100%);
+  border: 1px solid rgba(16, 19, 31, 0.1);
+  border-radius: 32px;
+  margin: 0 auto;
+  max-width: 1180px;
+  padding: 40px;
+}
+
+.ctaCard h2 {
+  max-width: 14ch;
+}
+
+.ctaCard .secondaryButton {
+  background: rgba(16, 19, 31, 0.04);
+  border-color: rgba(16, 19, 31, 0.1);
+  color: #10131f;
+}
+
+@media (max-width: 1080px) {
+  .heroGrid,
+  .storyGrid,
+  .pillarsGrid,
+  .modeGrid,
+  .strengthGrid,
+  .faqGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .integrationGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .hero {
+    padding-top: 20px;
+    padding-bottom: 72px;
+  }
+
+  .nav {
+    margin-bottom: 40px;
+  }
+
+  .navLink {
+    display: none;
+  }
+
+  .heroCopy h1 {
+    max-width: none;
+  }
+
+  .integrationGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .optionCard {
+    margin-left: 0;
+  }
+
+  .ctaCard {
+    padding: 28px;
+  }
+}
