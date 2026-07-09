@@ -1,0 +1,40 @@
+name: Deploy landing page
+
+# CI/CD for the marketing landing page (landing/index.html).
+# Deploys to Cloudflare Pages on every push to main that touches landing/.
+#
+# One-time setup before this can run:
+#   1. Create a Cloudflare API token with the "Cloudflare Pages: Edit" permission
+#      (My Profile → API Tokens → Create Token → "Edit Cloudflare Workers" or a
+#       custom token scoped to Account → Cloudflare Pages: Edit).
+#   2. In GitHub: Settings → Secrets and variables → Actions → add:
+#        - CLOUDFLARE_API_TOKEN   (the token above)
+#        - CLOUDFLARE_ACCOUNT_ID  (Cloudflare dashboard → any domain → Account ID)
+#   3. The first successful run creates the "confetti-landing" Pages project.
+#      Then attach your custom domain to that project in the Cloudflare dashboard
+#      (Pages → confetti-landing → Custom domains).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'landing/**'
+      - '.github/workflows/deploy-landing.yml'
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Publish to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy landing --project-name=confetti-landing --branch=main
