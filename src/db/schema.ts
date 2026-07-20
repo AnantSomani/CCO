@@ -11,6 +11,15 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
+// ─── waitlist_signups ────────────────────────────────────────────────────────
+// Email capture for the standalone marketing site.
+export const waitlistSignups = pgTable('waitlist_signups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: text('email').notNull().unique(),
+  source: text('source').notNull().default('landing_page'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ─── workspaces ──────────────────────────────────────────────────────────────
 // One row per Slack workspace that has installed the bot.
 // `id` is our internal uuid; `slack_team_id` is the Slack team identifier and is

@@ -10,6 +10,8 @@ name: Deploy landing page
 #   2. In GitHub: Settings → Secrets and variables → Actions → add:
 #        - CLOUDFLARE_API_TOKEN   (the token above)
 #        - CLOUDFLARE_ACCOUNT_ID  (Cloudflare dashboard → any domain → Account ID)
+#        - SUPABASE_URL           (e.g. https://project.supabase.co)
+#        - SUPABASE_ANON_KEY      (public anon key for the landing waitlist form)
 #   3. The first successful run creates the "confetti-landing" Pages project.
 #      Then attach your custom domain to that project in the Cloudflare dashboard
 #      (Pages → confetti-landing → Custom domains).
@@ -31,6 +33,15 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Write landing config
+        run: |
+          cat > landing/config.js <<EOF
+          window.CONFETTI_CONFIG = {
+            supabaseUrl: "${{ secrets.SUPABASE_URL }}",
+            supabaseAnonKey: "${{ secrets.SUPABASE_ANON_KEY }}"
+          };
+          EOF
 
       - name: Publish to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
