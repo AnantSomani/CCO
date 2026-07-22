@@ -210,14 +210,26 @@
     padding: 26px 0;
   }
   .strip-label {
+    flex: 1 1 260px;
+    min-width: 0;
+    max-width: 360px;
+    padding-inline: 8px;
     font-family: var(--mono);
     font-size: 0.74rem;
     font-weight: 600;
+    line-height: 1.5;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--ink-soft);
   }
-  .strip-badges { display: flex; gap: 10px; flex-wrap: wrap; }
+  .strip-badges {
+    flex: 1 1 520px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    padding-inline: 8px;
+  }
   .badge {
     display: inline-flex;
     align-items: center;
@@ -579,9 +591,17 @@
     .hero-flap .flap { font-size: clamp(2.2rem, 13vw, 3.4rem); filter: drop-shadow(4px 5px 0 var(--ink)); }
     .section { padding: 76px 0; }
     .section-head { margin-bottom: 36px; }
-    .strip-inner { padding: 18px 0; }
-    .strip-badges { gap: 8px; width: 100%; }
-    .badge { width: 100%; justify-content: flex-start; }
+    .strip-inner { padding: 18px 0; align-items: flex-start; }
+    .strip-label {
+      flex: 1 1 100%;
+      max-width: none;
+      font-size: 0.82rem;
+      line-height: 1.45;
+      letter-spacing: 0.01em;
+      text-transform: none;
+    }
+    .strip-badges { gap: 8px; width: 100%; justify-content: flex-start; }
+    .badge { width: 100%; max-width: none; justify-content: flex-start; }
     .slack-card, .feature, .form-success { padding: 20px 18px; box-shadow: 3px 3px 0 var(--ink); }
     .run-chip { padding: 9px 12px; font-size: 0.9rem; }
     .cta-section { padding: 88px 0 96px; }
