@@ -4,6 +4,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env.local"
+TUNNEL_NAME="${CLOUDFLARED_TUNNEL_NAME:-confetti-dev}"
+HOSTNAME="${CLOUDFLARED_HOSTNAME:-dashboard.tryconfetti.xyz}"
+APP_BASE_URL="https://$HOSTNAME"
+TUNNEL_TOKEN="${CLOUDFLARED_TUNNEL_TOKEN:-}"
 
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "pnpm is required but was not found on PATH."
@@ -40,34 +44,6 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-echo "Starting Cloudflare quick tunnel..."
-cloudflared tunnel --url http://localhost:3000 >"$CLOUDFLARED_LOG" 2>&1 &
-CLOUDFLARED_PID=$!
-
-APP_BASE_URL=""
-for _ in $(seq 1 60); do
-  APP_BASE_URL="$(python3 - "$CLOUDFLARED_LOG" <<'PY'
-import pathlib
-import re
-import sys
-
-text = pathlib.Path(sys.argv[1]).read_text(errors="ignore")
-match = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", text)
-print(match.group(0) if match else "")
-PY
-)"
-  if [[ -n "$APP_BASE_URL" ]]; then
-    break
-  fi
-  sleep 1
-done
-
-if [[ -z "$APP_BASE_URL" ]]; then
-  echo "Could not detect the quick tunnel URL."
-  echo "Check: $CLOUDFLARED_LOG"
-  exit 1
-fi
-
 python3 - "$ENV_FILE" "$APP_BASE_URL" <<'PY'
 import pathlib
 import sys
@@ -98,7 +74,24 @@ echo "Starting Inngest dev server..."
 (cd "$ROOT_DIR" && npx inngest-cli@latest dev) >"$INNGEST_LOG" 2>&1 &
 INNGEST_PID=$!
 
-sleep 2
+if [[ -n "$TUNNEL_TOKEN" ]]; then
+  TUNNEL_AUTH_MODE="token"
+  echo "Starting named Cloudflare tunnel with token: $TUNNEL_NAME"
+  cloudflared tunnel run --token "$TUNNEL_TOKEN" >"$CLOUDFLARED_LOG" 2>&1 &
+else
+  TUNNEL_AUTH_MODE="credentials-file"
+  echo "Starting named Cloudflare tunnel: $TUNNEL_NAME"
+  cloudflared tunnel run "$TUNNEL_NAME" >"$CLOUDFLARED_LOG" 2>&1 &
+fi
+CLOUDFLARED_PID=$!
+
+sleep 3
+
+if ! kill -0 "$CLOUDFLARED_PID" >/dev/null 2>&1; then
+  echo "The named tunnel failed to start."
+  echo "Check: $CLOUDFLARED_LOG"
+  exit 1
+fi
 
 cat <<EOF
 
@@ -109,6 +102,11 @@ APP_BASE_URL
 
 Inngest endpoint
   $APP_BASE_URL/api/inngest
+
+Tunnel
+  Name: $TUNNEL_NAME
+  Hostname: $HOSTNAME
+  Auth: $TUNNEL_AUTH_MODE
 
 Slack URLs
   Commands:       $APP_BASE_URL/api/slack/commands

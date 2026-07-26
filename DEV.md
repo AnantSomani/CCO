@@ -24,19 +24,49 @@ bash scripts/dev-stack.sh
 
 What it does:
 
-1. starts a Cloudflare quick tunnel to `http://localhost:3000`
-2. extracts the tunnel URL
-3. updates `APP_BASE_URL` in `.env.local`
-4. starts `pnpm dev`
-5. starts `npx inngest-cli@latest dev`
-6. prints the exact URLs to paste into Slack and Inngest
+1. sets `APP_BASE_URL` to `https://dashboard.tryconfetti.xyz`
+2. starts `pnpm dev`
+3. starts `npx inngest-cli@latest dev`
+4. starts the named Cloudflare tunnel `confetti-dev`
+5. prints the stable Slack and Inngest URLs
 
 Press `Ctrl-C` in that terminal to stop all three processes.
 
-## What to update after each restart
+If your local tunnel credentials JSON is missing, you can still use the script
+with a tunnel token:
 
-Cloudflare quick tunnels change every time. After each run, copy the printed URL
-into your Slack app settings:
+```bash
+CLOUDFLARED_TUNNEL_TOKEN="$(cloudflared tunnel token confetti-dev)" bash scripts/dev-stack.sh
+```
+
+## One-time Cloudflare setup
+
+Before the script will work with a fixed hostname, you need to set up the named
+tunnel once:
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel route dns confetti-dev dashboard.tryconfetti.xyz
+```
+
+Then create `~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: 9ceca87c-4a5d-45d8-ba34-3348dd7e8e5c
+credentials-file: /Users/arultrivedi/.cloudflared/9ceca87c-4a5d-45d8-ba34-3348dd7e8e5c.json
+
+ingress:
+  - hostname: dashboard.tryconfetti.xyz
+    service: http://localhost:3000
+  - service: http_status:404
+```
+
+If you are using the token-based startup command instead, the script does not
+need the local tunnel credentials JSON file.
+
+## Slack and Inngest URLs
+
+Because the hostname is fixed, these should stay the same:
 
 - Slash command URL: `<APP_BASE_URL>/api/slack/commands`
 - Events URL: `<APP_BASE_URL>/api/slack/events`
@@ -47,6 +77,19 @@ Use the same base URL for:
 
 - `APP_BASE_URL` in `.env.local`
 - the Inngest sync/serve endpoint: `<APP_BASE_URL>/api/inngest`
+
+If you want to use a different tunnel name or hostname later, you can override
+the defaults:
+
+```bash
+CLOUDFLARED_TUNNEL_NAME=my-tunnel CLOUDFLARED_HOSTNAME=dev.tryconfetti.xyz bash scripts/dev-stack.sh
+```
+
+You can combine that with the token flow too:
+
+```bash
+CLOUDFLARED_TUNNEL_NAME=my-tunnel CLOUDFLARED_HOSTNAME=dev.tryconfetti.xyz CLOUDFLARED_TUNNEL_TOKEN="$(cloudflared tunnel token my-tunnel)" bash scripts/dev-stack.sh
+```
 
 ## Dev checklist
 
@@ -83,7 +126,17 @@ CSV dates are aligned to:
 
 in the workspace timezone.
 
-### Tunnel changed and Slack stopped working
+### The named tunnel failed to start
 
-Quick tunnels are temporary. Re-run the startup script, then update all Slack
-URLs to the new `APP_BASE_URL`.
+Make sure all of these are true:
+
+- `cloudflared tunnel list` shows `confetti-dev`
+- `dashboard.tryconfetti.xyz` is routed to the tunnel
+
+If you are using the credentials-file flow, also make sure:
+
+- `~/.cloudflared/config.yml` exists
+- `~/.cloudflared/9ceca87c-4a5d-45d8-ba34-3348dd7e8e5c.json` exists
+
+If you are using the token flow, make sure `CLOUDFLARED_TUNNEL_TOKEN` is set
+when you run the script.
