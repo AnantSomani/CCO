@@ -90,6 +90,99 @@ const toPerson = (row: typeof people.$inferSelect): Person => ({
   optedOut: row.optedOut,
 });
 
+// ─── dashboard roster management ─────────────────────────────────────────────
+// CRUD for the admin dashboard. Every query is scoped by workspaceId so an
+// admin can never read or mutate another workspace's roster, even if a stale
+// person id is submitted.
+
+export type PersonWrite = {
+  name: string;
+  birthdayMonth: number | null;
+  birthdayDay: number | null;
+  startDate: string | null; // YYYY-MM-DD, or null
+  team: string | null;
+  role: string | null;
+};
+
+// Whole roster, opted-out included (the dashboard shows and toggles opt-out
+// state, so unlike the celebration queries it must not filter it out).
+export const listPeople = async (db: Db, workspaceId: string): Promise<Person[]> => {
+  const rows = await db
+    .select()
+    .from(people)
+    .where(eq(people.workspaceId, workspaceId))
+    .orderBy(people.name);
+  return rows.map(toPerson);
+};
+
+// Returns the new person, or null if the email already exists in this
+// workspace (the (workspace_id, email) unique constraint). Null lets the
+// action layer surface a friendly "already on the roster" message instead of
+// a 500.
+export const insertPerson = async (
+  db: Db,
+  workspaceId: string,
+  email: string,
+  fields: PersonWrite,
+): Promise<Person | null> => {
+  const rows = await db
+    .insert(people)
+    .values({ workspaceId, email, ...fields })
+    .onConflictDoNothing({ target: [people.workspaceId, people.email] })
+    .returning();
+  const row = rows[0];
+  return row ? toPerson(row) : null;
+};
+
+// Updates the mutable fields of a person by id, scoped to the workspace.
+// Email is intentionally not updatable here (it is the identity key). Returns
+// null when no row matches (unknown or cross-workspace id).
+export const updatePerson = async (
+  db: Db,
+  workspaceId: string,
+  personId: string,
+  fields: PersonWrite,
+): Promise<Person | null> => {
+  const rows = await db
+    .update(people)
+    .set({ ...fields, updatedAt: new Date() })
+    .where(and(eq(people.id, personId), eq(people.workspaceId, workspaceId)))
+    .returning();
+  const row = rows[0];
+  return row ? toPerson(row) : null;
+};
+
+// Hard delete (CONVENTIONS: no soft delete in v1). FK cascades remove any
+// events/suggestions for this person. Returns false when nothing matched.
+export const deletePerson = async (
+  db: Db,
+  workspaceId: string,
+  personId: string,
+): Promise<boolean> => {
+  const rows = await db
+    .delete(people)
+    .where(and(eq(people.id, personId), eq(people.workspaceId, workspaceId)))
+    .returning({ id: people.id });
+  return rows.length > 0;
+};
+
+// Sets opt-out state by person id (the dashboard equivalent of the
+// slack-user-id variant used by the DM handler). Returns false when nothing
+// matched.
+export const setOptedOutById = async (
+  db: Db,
+  workspaceId: string,
+  personId: string,
+  optedOut: boolean,
+): Promise<boolean> => {
+  const rows = await db
+    .update(people)
+    .set({ optedOut, updatedAt: new Date() })
+    .where(and(eq(people.id, personId), eq(people.workspaceId, workspaceId)))
+    .returning({ id: people.id });
+  return rows.length > 0;
+};
+
 // Opt-out filter lives at the query layer (Architecture invariant #8):
 // callers can't accidentally include opted-out people.
 export const findBirthdayCandidates = async (

@@ -28,7 +28,10 @@ const trimOrUndef = (v: unknown): unknown => {
   return t === '' ? undefined : t;
 };
 
-const birthdaySchema = z
+// Exported so the dashboard's single-person form (src/lib/person-form.ts)
+// reuses the exact same MM-DD / YYYY-MM-DD validation as the CSV importer,
+// including the Feb-29 and calendar-validity edge cases.
+export const birthdaySchema = z
   .string()
   .trim()
   .superRefine((s, ctx) => {
@@ -51,7 +54,7 @@ const birthdaySchema = z
     }
   });
 
-const startDateSchema = z
+export const startDateSchema = z
   .string()
   .trim()
   .superRefine((s, ctx) => {

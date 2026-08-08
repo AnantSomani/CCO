@@ -40,7 +40,12 @@ These are deferred to v2+. Do not build them, propose them, or design around the
 - Activities, trivia, Nerf wars, ice cream carts, scavenger hunts. Only birthdays and work anniversaries.
 - Cross-office travel matching.
 - HRIS sync (Rippling, Gusto, Workday). CSV upload only.
-- Web dashboard. Everything happens in Slack.
+- ~~Web dashboard. Everything happens in Slack.~~ **Revised (2026-08):** a
+  minimal, Slack-OAuth-gated **roster dashboard** (`/dashboard`) is now in
+  scope for adding/editing people, birthdays, and work anniversaries — a
+  friendlier alternative to CSV for non-technical admins. Approvals,
+  suggestions, and celebrations still happen entirely in Slack; the dashboard
+  is data-entry only.
 - Multi-admin approval flows. One admin per workspace approves everything.
 - Billing, Stripe, plans, trials. v1 is free for design partners.
 - Sympathy moments, illness, layoffs, weddings, new babies. Sensitive moments are deferred until we have time to design them with care.

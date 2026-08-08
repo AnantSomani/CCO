@@ -162,3 +162,18 @@ export const posts = pgTable('posts', {
   actualSpendCents: integer('actual_spend_cents'),
   spendLoggedAt: timestamp('spend_logged_at', { withTimezone: true }),
 });
+
+// ─── tenants ─────────────────────────────────────────────────────────────────
+// Maps a public subdomain slug (theta.tryconfetti.xyz → 'theta') to a
+// workspace, powering the self-serve proxy dashboard. Purely additive: nothing
+// in the Slack pipeline reads this table. One slug per workspace in v1
+// (workspace_id is unique), and slug is globally unique since it is a hostname.
+export const tenants = pgTable('tenants', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id')
+    .notNull()
+    .unique()
+    .references(() => workspaces.id, { onDelete: 'cascade' }),
+  slug: text('slug').notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

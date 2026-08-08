@@ -38,6 +38,9 @@ export default async function UploadPage(): Promise<React.ReactElement> {
       <p style={{ color: '#666', fontSize: '0.9rem' }}>
         Re-uploading is safe — it updates existing people by email and preserves opt-outs.
       </p>
+      <p style={{ fontSize: '0.9rem' }}>
+        Prefer to add people one at a time? <a href="/dashboard">Open the dashboard →</a>
+      </p>
       <UploadForm />
     </main>
   );
