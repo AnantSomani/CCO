@@ -4,10 +4,18 @@ import { inngest } from '@/jobs/client';
 import { log } from '@/lib/log';
 import { getSlackClient } from '@/slack/client';
 import { handleApproveEvent, handleModifyEvent, handleSkipEvent } from '@/slack/handlers/actions';
+import {
+  handleApproveAgentAction,
+  handleCancelAgentAction,
+  handleRejectAgentAction,
+} from '@/slack/handlers/agent-actions';
 import { handleModifySubmit } from '@/slack/handlers/views';
 import {
+  ACTION_APPROVE_AGENT_ACTION,
   ACTION_APPROVE_EVENT,
+  ACTION_CANCEL_AGENT_ACTION,
   ACTION_MODIFY_EVENT,
+  ACTION_REJECT_AGENT_ACTION,
   ACTION_SKIP_EVENT,
   CALLBACK_MODIFY_GESTURE,
 } from '@/slack/ids';
@@ -68,6 +76,21 @@ export const POST = async (req: NextRequest): Promise<NextResponse> => {
       case ACTION_MODIFY_EVENT: {
         const result = await handleModifyEvent(ctx, parsed.data);
         if (!result.ok) log.warn('modify handler failed', { error: result.error });
+        break;
+      }
+      case ACTION_APPROVE_AGENT_ACTION: {
+        const result = await handleApproveAgentAction(ctx, parsed.data);
+        if (!result.ok) log.warn('agent action approval failed', { error: result.error });
+        break;
+      }
+      case ACTION_REJECT_AGENT_ACTION: {
+        const result = await handleRejectAgentAction(ctx, parsed.data);
+        if (!result.ok) log.warn('agent action rejection failed', { error: result.error });
+        break;
+      }
+      case ACTION_CANCEL_AGENT_ACTION: {
+        const result = await handleCancelAgentAction(ctx, parsed.data);
+        if (!result.ok) log.warn('agent action cancellation failed', { error: result.error });
         break;
       }
       default:

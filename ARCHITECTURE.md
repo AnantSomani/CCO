@@ -97,7 +97,10 @@ Do not deviate from this structure without updating this document in the same co
 
 ## Data model
 
-Seven tables. Implemented in Drizzle at `src/db/schema.ts`.
+Eleven tables. Implemented in Drizzle at `src/db/schema.ts`. In addition to the
+core workspace, roster, celebration, and tenant tables, `agent_runs` and
+`agent_actions` provide durable audit and approval state for natural-language
+commands.
 
 ### workspaces
 
@@ -116,7 +119,9 @@ updated_at               timestamptz not null default now()
 
 ### users
 
-Admins who can approve. v1 has one admin per workspace (the installer), but the table supports more.
+The single admin who can use agent tools and approve actions. v1 enforces one
+admin per workspace with a partial unique index; the first installer keeps this
+role across reinstalls.
 
 ```
 id              uuid pk
@@ -280,6 +285,32 @@ Given event_id:
 ### Loop 5 — Spend logging (passive, message-driven)
 
 ```
+
+### Loop 6 — Admin agent request (durable, event-triggered)
+
+```
+On an authorized natural-language /confetti request:
+  1. Persist an idempotent agent_runs row.
+  2. Enqueue confetti/agent-command.requested.
+  3. Run the tool-use loop in Inngest.
+  4. Execute read-only tools immediately.
+  5. Persist every mutation as agent_actions.status='pending_confirmation'.
+  6. DM the response and an Approve/Reject card for each proposed action.
+```
+
+### Loop 7 — Approved agent action (durable, event-triggered)
+
+```
+On an authorized Approve button:
+  1. Atomically transition pending_confirmation → approved.
+  2. Enqueue confetti/agent-action.approved.
+  3. Validate the stored payload again.
+  4. Execute the action idempotently.
+  5. Persist the result and update the Slack approval card.
+```
+
+Food-order and event-planning actions are sandbox simulations in this phase.
+They create mock references and receipts but never call a vendor or spend money.
 On DM to bot from admin:
   - If most recent unposted-spend event for this admin exists AND message parses as a number:
       update posts.actual_spend_cents
@@ -343,7 +374,10 @@ Tools give us a typed contract and let the agent reason naturally before committ
 
 These must always hold. Encode as assertions, types, or runtime checks where possible.
 
-1. **No real money is spent in v1.** Do not import, call, or scaffold DoorDash, Amazon, Resy, or any payment SDK. If a prompt suggests it, refuse and reference this section.
+1. **No real money is spent in v1.** Do not import or call DoorDash, Amazon,
+   Resy, payment APIs, or reservation APIs. Sandbox action simulations are
+   allowed only when they are labeled clearly, require admin confirmation, and
+   cannot contact a vendor or spend money.
 2. **All date math happens in workspace timezone.** Never compare `new Date()` to a stored date directly. Use the `dates.ts` helpers.
 3. **Slack bot tokens are encrypted at rest.** Never log them. Never return them from a query unless the consumer needs to call Slack right now.
 4. **Slack webhook requests are signature-verified.** Bolt does this; do not bypass it.
@@ -416,7 +450,9 @@ All manifest URLs use `${APP_BASE_URL}` placeholders. Substitute before pasting 
 2. **Database:** Supabase Postgres. We use Supabase *only* for the Postgres database in v1 — not Supabase Auth (Slack OAuth is the only auth), not Supabase Storage, not Supabase Realtime, not the JS client. Connect via the `DATABASE_URL` connection string (use the *pooled* connection string for serverless, port 6543, with `?pgbouncer=true&connection_limit=1`). Drizzle is the ORM. Keep a separate `DIRECT_URL` (port 5432) for migrations.
 3. **Logging:** `console.log` / `console.error` only for v1. Use a thin wrapper `src/lib/log.ts` so we can swap in Axiom or Better Stack later without touching call sites. Wrapper signature: `log.info(msg, meta?)`, `log.warn(msg, meta?)`, `log.error(msg, meta?)`. Never log tokens or full Slack payloads — meta should be hand-picked fields.
 4. **Slack app distribution:** Single-workspace dev app through end of Week 3. In Week 4, before installing to the first design partner, submit for Slack public distribution. Document the install URL in the README once approved.
-5. **Domain:** `confetti.vercel.app` (or whatever Vercel auto-assigns). Set `APP_BASE_URL` to this. All Slack manifest URLs reference `APP_BASE_URL` — never hardcode the domain.
+5. **Domain:** use the stable Vercel deployment or custom production domain.
+   Set `APP_BASE_URL` to it and replace development URLs in the Slack manifest
+   before applying that manifest to the production Slack app.
 6. **Design partner:** Profound is the target. Backup plan if Profound doesn't commit by end of Week 2: ask in founder communities (e.g. South Park Commons, On Deck, YC Slack alumni groups) for a 10–50 person startup willing to be design partner #1. Do not build v1 without a named target workspace — it changes too many small decisions.
 
 ### Implications of these decisions

@@ -11,6 +11,7 @@ import { err, ok, type Result } from '@/lib/result';
 
 const NONCE_BYTES = 16;
 const DEFAULT_MAX_AGE_MS = 10 * 60 * 1000;
+const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 
 type StatePayload = { nonce: string; ts: number };
 
@@ -18,9 +19,12 @@ const toBase64Url = (buf: Buffer): string =>
   buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 const fromBase64Url = (s: string): Buffer => {
+  if (!s || !BASE64URL_RE.test(s)) throw new Error('invalid base64url');
   const padded = s.replace(/-/g, '+').replace(/_/g, '/');
   const padding = '='.repeat((4 - (padded.length % 4)) % 4);
-  return Buffer.from(padded + padding, 'base64');
+  const decoded = Buffer.from(padded + padding, 'base64');
+  if (toBase64Url(decoded) !== s) throw new Error('non-canonical base64url');
+  return decoded;
 };
 
 const hmac = (payload: string): Buffer =>

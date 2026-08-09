@@ -67,6 +67,7 @@ const resolve = async (
 
   const user = await getUserBySlackUserId(ctx.db, workspace.id, payload.user.id);
   if (!user) return err(`unknown user: ${payload.user.id} in workspace ${workspace.id}`);
+  if (!user.isAdmin) return err(`non-admin user cannot approve events: ${payload.user.id}`);
 
   const bundle = await getEventForApproval(ctx.db, buttonValue.eventId);
   if (!bundle) return err(`unknown event: ${buttonValue.eventId}`);

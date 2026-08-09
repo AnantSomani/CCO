@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db/client';
 import { upsertUser } from '@/db/queries/users';
-import { upsertWorkspace } from '@/db/queries/workspaces';
+import { getAdminUser, upsertWorkspace } from '@/db/queries/workspaces';
 import { env } from '@/lib/env';
 import { log } from '@/lib/log';
 import { COOKIE_MAX_AGE_SECONDS, signUploadCookie, UPLOAD_COOKIE_NAME } from '@/lib/upload-cookie';
@@ -80,16 +80,21 @@ export const GET = async (req: NextRequest): Promise<NextResponse> => {
     installedBySlackUser: oauth.authed_user.id,
     botAccessToken: oauth.access_token,
   });
+  const existingAdmin = await getAdminUser(db, workspace.id);
+  const isAdmin = existingAdmin
+    ? existingAdmin.slackUserId === oauth.authed_user.id
+    : workspace.installedBySlackUser === oauth.authed_user.id;
   await upsertUser(db, {
     workspaceId: workspace.id,
     slackUserId: oauth.authed_user.id,
-    isAdmin: true,
+    isAdmin,
   });
 
   log.info('workspace installed', {
     workspaceId: workspace.id,
     slackTeamId: oauth.team.id,
     installedBy: oauth.authed_user.id,
+    isAdmin,
   });
 
   const response = htmlResponse(
@@ -97,16 +102,22 @@ export const GET = async (req: NextRequest): Promise<NextResponse> => {
     `<html><body style="font-family:sans-serif;padding:3rem;max-width:640px;margin:0 auto;line-height:1.5">
       <h1>🎉 Installed</h1>
       <p>Confetti is now in <strong>${escapeHtml(oauth.team.name)}</strong>.</p>
-      <p><a href="/upload" style="display:inline-block;padding:0.6rem 1rem;background:#4a154b;color:#fff;text-decoration:none;border-radius:4px">Upload your team CSV →</a></p>
+      ${
+        isAdmin
+          ? '<p><a href="/upload" style="display:inline-block;padding:0.6rem 1rem;background:#4a154b;color:#fff;text-decoration:none;border-radius:4px">Upload your team CSV →</a></p>'
+          : '<p>The existing Confetti admin keeps access to roster and agent controls. Ask them to make any changes.</p>'
+      }
       <p style="color:#666;font-size:0.9rem">Or try <code>/confetti hello</code> in any channel.</p>
     </body></html>`,
   );
-  response.cookies.set(UPLOAD_COOKIE_NAME, signUploadCookie(workspace.id, oauth.team.id), {
-    httpOnly: true,
-    secure: env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: COOKIE_MAX_AGE_SECONDS,
-    path: '/',
-  });
+  if (isAdmin) {
+    response.cookies.set(UPLOAD_COOKIE_NAME, signUploadCookie(workspace.id, oauth.team.id), {
+      httpOnly: true,
+      secure: env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: COOKIE_MAX_AGE_SECONDS,
+      path: '/',
+    });
+  }
   return response;
 };

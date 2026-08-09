@@ -16,6 +16,13 @@ This file is for the Slackbot/backend dev flow.
 
 ## One-command startup
 
+After pulling migrations or schema changes, run once:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm db:migrate
+```
+
 Run:
 
 ```bash
@@ -108,6 +115,34 @@ pnpm scan
 ```
 
 8. look for the approval DM from Confetti in Slack
+
+## Test the admin agent
+
+Natural-language commands run through the local Inngest server and reply by DM.
+The requesting Slack user must be an admin in Confetti's `users` table.
+
+Read-only test:
+
+```text
+/confetti what is our current budget?
+```
+
+Mutation test:
+
+```text
+/confetti set our default budget to $75
+```
+
+The mutation must not happen immediately. Confetti should DM an approval card;
+only the Approve button may enqueue execution.
+
+Sandbox planning test:
+
+```text
+/confetti plan a sandbox order for five large pizzas from Local Pizza for 20 people at 123 Market St, San Francisco, CA on August 12 at 11am PT for about $40
+```
+
+The final result must say that no vendor was contacted and no money was spent.
 
 ## Common issues
 

@@ -1,5 +1,6 @@
 import type { Db } from '@/db/client';
 import { listOptedOut } from '@/db/queries/people';
+import { isWorkspaceAdmin } from '@/db/queries/users';
 import {
   getWorkspaceBySlackTeamId,
   setCelebrationChannel,
@@ -16,7 +17,11 @@ import {
 } from '@/slack/ids';
 import type { SlashCommandPayload } from '@/slack/schemas';
 
-type Logger = { info: (m: string, meta?: Record<string, unknown>) => void };
+type Logger = {
+  info: (m: string, meta?: Record<string, unknown>) => void;
+  warn: (m: string, meta?: Record<string, unknown>) => void;
+  error: (m: string, meta?: Record<string, unknown>) => void;
+};
 
 export type CommandHandlerCtx = {
   db: Db;
@@ -33,7 +38,36 @@ const HELP_TEXT =
   '• `/confetti channel <#channel>` — set the celebration channel\n' +
   '• `/confetti budget <usd>` — set the default per-event budget\n' +
   '• `/confetti opt-outs` — list opted-out teammates\n' +
-  "• `/confetti hello` — check I'm alive";
+  "• `/confetti hello` — check I'm alive\n" +
+  '• Or ask in plain English, like `/confetti what is our budget?`';
+
+const STATIC_SUBCOMMANDS = new Set([
+  '',
+  SUBCOMMAND_HELP,
+  SUBCOMMAND_HELLO,
+  SUBCOMMAND_CHANNEL,
+  SUBCOMMAND_BUDGET,
+  SUBCOMMAND_OPT_OUTS,
+]);
+
+export const shouldRunCommandAgent = (text: string): boolean => {
+  const subcommand = text.trim().split(/\s+/).filter(Boolean)[0] ?? '';
+  return !STATIC_SUBCOMMANDS.has(subcommand);
+};
+
+export const getAgentAcknowledgement = (text: string): string => {
+  const request = text.trim().toLowerCase();
+  if (/\b(food|lunch|meal|pizza|catering|restaurant|order)\b/.test(request)) {
+    return "I'm checking the sandbox order against your budget and safety rules. I'll DM you the proposal or explain what needs adjusting.";
+  }
+  if (/\b(event|venue|offsite|party|outing|retreat)\b/.test(request)) {
+    return "I'm preparing the sandbox event plan. I'll DM you the proposal or explain what needs adjusting.";
+  }
+  if (/^(what|which|who|how many|show|list|summarize|check|tell me)\b/.test(request)) {
+    return "I'm checking that now. I'll DM you the answer.";
+  }
+  return "I'm reviewing that request. I'll DM you the result; any change will require approval.";
+};
 
 // Slack sends `<#C0123|channel-name>` as the literal text for a channel
 // mention; bare `C0123` also works. Both forms accepted.
@@ -68,6 +102,12 @@ export const handleSlashCommand = async (
   const tokens = payload.text.trim().split(/\s+/).filter(Boolean);
   const subcommand = tokens[0] ?? '';
   const rest = tokens.slice(1).join(' ');
+
+  if (subcommand !== '' && subcommand !== SUBCOMMAND_HELP && subcommand !== SUBCOMMAND_HELLO) {
+    const isAdmin = await isWorkspaceAdmin(ctx.db, workspace.id, payload.user_id);
+    if (!isAdmin)
+      return ephemeral('Only a Confetti workspace admin can change or inspect settings.');
+  }
 
   switch (subcommand) {
     case '':

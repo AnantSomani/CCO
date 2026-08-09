@@ -1,7 +1,10 @@
 import { serve } from 'inngest/next';
+import { agentAuditRetention } from '@/jobs/agent-audit-retention';
+import { agentCommand } from '@/jobs/agent-command';
 import { inngest } from '@/jobs/client';
 import { dailyScan } from '@/jobs/daily-scan';
 import { dayOfPost } from '@/jobs/day-of-post';
+import { executeAgentAction } from '@/jobs/execute-agent-action';
 import { generateSuggestions } from '@/jobs/generate-suggestions';
 
 // Placeholder function so the Inngest dev UI has something to display.
@@ -19,5 +22,13 @@ const placeholderHello = inngest.createFunction(
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [placeholderHello, dailyScan, generateSuggestions, dayOfPost],
+  functions: [
+    placeholderHello,
+    dailyScan,
+    generateSuggestions,
+    dayOfPost,
+    agentCommand,
+    executeAgentAction,
+    agentAuditRetention,
+  ],
 });

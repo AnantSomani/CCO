@@ -38,14 +38,14 @@ export const upsertUser = async (db: Db, input: UpsertUserInput): Promise<User> 
       slackUserId: input.slackUserId,
       email: input.email ?? null,
       name: input.name ?? null,
-      isAdmin: input.isAdmin ?? true,
+      isAdmin: input.isAdmin ?? false,
     })
     .onConflictDoUpdate({
       target: [users.workspaceId, users.slackUserId],
       set: {
         email: input.email ?? null,
         name: input.name ?? null,
-        isAdmin: input.isAdmin ?? true,
+        ...(input.isAdmin === undefined ? {} : { isAdmin: input.isAdmin }),
       },
     })
     .returning();
@@ -66,4 +66,13 @@ export const getUserBySlackUserId = async (
     .limit(1);
   const row = rows[0];
   return row ? toUser(row) : null;
+};
+
+export const isWorkspaceAdmin = async (
+  db: Db,
+  workspaceId: string,
+  slackUserId: string,
+): Promise<boolean> => {
+  const user = await getUserBySlackUserId(db, workspaceId, slackUserId);
+  return user?.isAdmin === true;
 };

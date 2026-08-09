@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   boolean,
   date,
@@ -8,6 +9,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -52,7 +54,12 @@ export const users = pgTable(
     isAdmin: boolean('is_admin').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [unique('users_workspace_slack_user_unique').on(t.workspaceId, t.slackUserId)],
+  (t) => [
+    unique('users_workspace_slack_user_unique').on(t.workspaceId, t.slackUserId),
+    uniqueIndex('users_one_admin_per_workspace_idx')
+      .on(t.workspaceId)
+      .where(sql`${t.isAdmin} = true`),
+  ],
 );
 
 // ─── people ──────────────────────────────────────────────────────────────────
@@ -177,3 +184,74 @@ export const tenants = pgTable('tenants', {
   slug: text('slug').notNull().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ─── agent_runs ──────────────────────────────────────────────────────────────
+// Durable record of each natural-language Slack request. `idempotency_key`
+// prevents Slack retries from enqueueing the same request more than once.
+export const agentRuns = pgTable(
+  'agent_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    requestedBySlackUser: text('requested_by_slack_user').notNull(),
+    requestText: text('request_text').notNull(),
+    status: text('status').notNull().default('queued'),
+    idempotencyKey: text('idempotency_key').notNull().unique(),
+    responseText: text('response_text'),
+    responseChannelId: text('response_channel_id'),
+    responseMessageTs: text('response_message_ts'),
+    model: text('model'),
+    toolCalls: jsonb('tool_calls'),
+    errorCode: text('error_code'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('agent_runs_workspace_created_idx').on(t.workspaceId, t.createdAt),
+    index('agent_runs_requester_created_idx').on(
+      t.workspaceId,
+      t.requestedBySlackUser,
+      t.createdAt,
+    ),
+  ],
+);
+
+// ─── agent_actions ───────────────────────────────────────────────────────────
+// Mutating tools only propose rows here. A Slack admin must approve each row
+// before the execution job can apply it. Sandbox action kinds never call a
+// vendor or spend money.
+export const agentActions = pgTable(
+  'agent_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: 'cascade' }),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    requestedBySlackUser: text('requested_by_slack_user').notNull(),
+    kind: text('kind').notNull(),
+    summary: text('summary').notNull(),
+    payload: jsonb('payload').notNull(),
+    estimatedCostCents: integer('estimated_cost_cents'),
+    status: text('status').notNull().default('pending_confirmation'),
+    idempotencyKey: text('idempotency_key').notNull().unique(),
+    confirmationChannelId: text('confirmation_channel_id'),
+    confirmationMessageTs: text('confirmation_message_ts'),
+    approvedBySlackUser: text('approved_by_slack_user'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    executionResult: jsonb('execution_result'),
+    errorCode: text('error_code'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('agent_actions_run_idx').on(t.runId),
+    index('agent_actions_workspace_status_idx').on(t.workspaceId, t.status),
+  ],
+);

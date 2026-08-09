@@ -1,8 +1,14 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db/client';
+import { inngest } from '@/jobs/client';
 import { log } from '@/lib/log';
 import { getSlackClient } from '@/slack/client';
-import { handleSlashCommand } from '@/slack/handlers/commands';
+import { enqueueAgentCommand } from '@/slack/enqueue-agent-command';
+import {
+  getAgentAcknowledgement,
+  handleSlashCommand,
+  shouldRunCommandAgent,
+} from '@/slack/handlers/commands';
 import { COMMAND_CONFETTI } from '@/slack/ids';
 import { slashCommandSchema } from '@/slack/schemas';
 import { verifySlackSignature } from '@/slack/signing';
@@ -37,6 +43,45 @@ export const POST = async (req: NextRequest): Promise<NextResponse> => {
 
   if (payload.command !== COMMAND_CONFETTI) {
     return ephemeral(`Unknown command: ${payload.command}`);
+  }
+
+  if (shouldRunCommandAgent(payload.text)) {
+    let queued: Awaited<ReturnType<typeof enqueueAgentCommand>>;
+    try {
+      queued = await enqueueAgentCommand(db, inngest, {
+        slackTeamId: payload.team_id,
+        slackUserId: payload.user_id,
+        requestText: payload.text,
+        idempotencyKey: payload.trigger_id,
+      });
+    } catch (error) {
+      log.error('admin agent enqueue threw', {
+        slackTeamId: payload.team_id,
+        userId: payload.user_id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return ephemeral("I couldn't queue that request. Nothing was changed; please try again.");
+    }
+    if (!queued.ok) {
+      log.error('failed to enqueue admin agent command', {
+        slackTeamId: payload.team_id,
+        userId: payload.user_id,
+        error: queued.error,
+      });
+      return ephemeral("I couldn't queue that request. Nothing was changed; please try again.");
+    }
+    switch (queued.value.status) {
+      case 'queued':
+        return ephemeral(getAgentAcknowledgement(payload.text));
+      case 'duplicate':
+        return ephemeral("I'm already working on that request.");
+      case 'unauthorized':
+        return ephemeral('Only a Confetti workspace admin can use natural-language agent tools.');
+      case 'rate_limited':
+        return ephemeral('Too many agent requests at once. Please wait a minute and try again.');
+      case 'unknown_workspace':
+        return ephemeral("I don't recognize this workspace. Try reinstalling Confetti.");
+    }
   }
 
   const reply = await handleSlashCommand({ db, getSlackClient }, payload);

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "users_one_admin_per_workspace_idx" ON "users" USING btree ("workspace_id") WHERE "users"."is_admin" = true;

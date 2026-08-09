@@ -56,7 +56,6 @@ export const upsertWorkspace = async (db: Db, input: UpsertWorkspaceInput): Prom
       target: workspaces.slackTeamId,
       set: {
         slackTeamName: input.slackTeamName,
-        installedBySlackUser: input.installedBySlackUser,
         botAccessTokenEnc,
         updatedAt: now,
       },

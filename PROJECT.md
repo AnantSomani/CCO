@@ -36,7 +36,10 @@ When a teammate's birthday or work anniversary is approaching, Confetti DMs a wo
 
 These are deferred to v2+. Do not build them, propose them, or design around them in v1:
 
-- Real purchasing integrations (DoorDash, Amazon, Resy, OpenTable). Spend is admin-reported only.
+- Real purchasing integrations (DoorDash, Amazon, Resy, OpenTable). Spend is
+  admin-reported only. Clearly labeled sandbox simulations are allowed for
+  validating agent planning, approval, cancellation, and audit workflows; they
+  must not contact vendors or spend money.
 - Activities, trivia, Nerf wars, ice cream carts, scavenger hunts. Only birthdays and work anniversaries.
 - Cross-office travel matching.
 - HRIS sync (Rippling, Gusto, Workday). CSV upload only.

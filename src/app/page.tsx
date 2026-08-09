@@ -4,23 +4,24 @@ const pillars = [
   {
     eyebrow: 'Moments',
     title: 'Mark the moments that matter.',
-    body:
-      'Birthdays, anniversaries, promotions, new babies, weddings, and sensitive moments handled with context, taste, and budget controls.',
+    body: 'Birthdays, anniversaries, promotions, new babies, weddings, and sensitive moments handled with context, taste, and budget controls.',
     points: ['Finds the moment', 'Suggests the right gesture', 'Acts with approval when needed'],
   },
   {
     eyebrow: 'Activities',
     title: 'Plan office energy before it fades.',
-    body:
-      'From trivia nights to themed lunches to surprise ice cream carts, Confetti turns vague ideas into a date, budget, and invite.',
+    body: 'From trivia nights to themed lunches to surprise ice cream carts, Confetti turns vague ideas into a date, budget, and invite.',
     points: ['Spots low-energy weeks', 'Ranks the best options', 'Handles rollout in Slack'],
   },
   {
     eyebrow: 'Travel',
     title: 'Make every office visit count.',
-    body:
-      'When someone travels between offices, Confetti lines up the right coffee, dinner, or intro so distributed teams feel like one company.',
-    points: ['Matches the right people', 'Suggests the right setting', 'Makes travel feel intentional'],
+    body: 'When someone travels between offices, Confetti lines up the right coffee, dinner, or intro so distributed teams feel like one company.',
+    points: [
+      'Matches the right people',
+      'Suggests the right setting',
+      'Makes travel feel intentional',
+    ],
   },
 ];
 
@@ -37,38 +38,32 @@ const modes = [
   {
     number: '01',
     title: 'Proactive',
-    body:
-      'Confetti watches for moments worth marking and brings a recommendation to Slack with context, cost, and a next step.',
+    body: 'Confetti watches for moments worth marking and brings a recommendation to Slack with context, cost, and a next step.',
   },
   {
     number: '02',
     title: 'On-demand',
-    body:
-      'Ask it like a chief of staff: plan Friday, send a cake, start a card, or make a trip count.',
+    body: 'Ask it like a chief of staff: plan Friday, send a cake, start a card, or make a trip count.',
   },
   {
     number: '03',
     title: 'Autonomous',
-    body:
-      'Set budgets and guardrails. Confetti handles the easy wins and checks in when judgment or extra spend is needed.',
+    body: 'Set budgets and guardrails. Confetti handles the easy wins and checks in when judgment or extra spend is needed.',
   },
 ];
 
 const strengths = [
   {
     title: 'Context, not templates',
-    body:
-      'Confetti reads calendars, channels, profiles, office patterns, and collaboration history so recommendations fit the team.',
+    body: 'Confetti reads calendars, channels, profiles, office patterns, and collaboration history so recommendations fit the team.',
   },
   {
     title: 'Judgment, not automation',
-    body:
-      'The right move is different for a promotion, a birthday, a travel visit, or a tough week. Confetti adapts instead of repeating scripts.',
+    body: 'The right move is different for a promotion, a birthday, a travel visit, or a tough week. Confetti adapts instead of repeating scripts.',
   },
   {
     title: 'Execution, not reminders',
-    body:
-      'Budgets, ordering, reservations, invites, reminders, and follow-ups happen in one loop instead of across five tools and two people.',
+    body: 'Budgets, ordering, reservations, invites, reminders, and follow-ups happen in one loop instead of across five tools and two people.',
   },
 ];
 
@@ -90,8 +85,7 @@ const integrations = [
 const faqs = [
   {
     question: 'Will Confetti spend money without me knowing?',
-    answer:
-      'You set the threshold. Anything over budget or sensitive asks first in Slack.',
+    answer: 'You set the threshold. Anything over budget or sensitive asks first in Slack.',
   },
   {
     question: 'Does this replace People Ops?',
@@ -147,8 +141,8 @@ export default function Home() {
             <div className={styles.kicker}>AI office culture platform for Slack</div>
             <h1>The teammate who remembers what culture needs.</h1>
             <p className={styles.heroText}>
-              Confetti runs milestones, office activities, and travel rituals from Slack. It
-              spots the signal, suggests the right move, and follows through.
+              Confetti runs milestones, office activities, and travel rituals from Slack. It spots
+              the signal, suggests the right move, and follows through.
             </p>
             <div className={styles.heroActions}>
               <a className={styles.primaryButton} href="/api/slack/install">
@@ -220,9 +214,7 @@ export default function Home() {
         <div className={styles.storyIntro}>
           <span className={styles.sectionLabel}>How it works</span>
           <h2>One loop from signal to action.</h2>
-          <p>
-            Confetti finds the moment, recommends the move, and carries the work through Slack.
-          </p>
+          <p>Confetti finds the moment, recommends the move, and carries the work through Slack.</p>
         </div>
 
         <div className={styles.storyGrid}>
@@ -230,8 +222,8 @@ export default function Home() {
             <span className={styles.storyNumber}>01</span>
             <h3>Spot the moment</h3>
             <p>
-              Birthdays, anniversaries, promotions, office slumps, and travel windows show up
-              before someone has to remember them manually.
+              Birthdays, anniversaries, promotions, office slumps, and travel windows show up before
+              someone has to remember them manually.
             </p>
           </article>
 
@@ -340,9 +332,7 @@ export default function Home() {
         <div className={styles.ctaCard}>
           <span className={styles.sectionLabel}>Bring Confetti in</span>
           <h2>Give your team a better default for culture.</h2>
-          <p>
-            Start in Slack. Let Confetti handle the remembering, planning, and follow-through.
-          </p>
+          <p>Start in Slack. Let Confetti handle the remembering, planning, and follow-through.</p>
           <div className={styles.heroActions}>
             <a className={styles.primaryButton} href="/api/slack/install">
               Add to Slack

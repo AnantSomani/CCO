@@ -18,13 +18,13 @@ features:
     messages_tab_read_only_enabled: false
   slash_commands:
     - command: /confetti
-      url: https://confetti-dev.anantsomani.com/api/slack/commands
-      description: Manage Confetti settings (channel, budget, opt-outs)
-      usage_hint: "[setup|channel|budget|opt-outs|help]"
-      should_escape: false
+      url: https://dashboard.tryconfetti.xyz/api/slack/commands
+      description: Ask Confetti to manage celebrations, settings, and your roster
+      usage_hint: "[question|channel|budget|opt-outs|help]"
+      should_escape: true
 oauth_config:
   redirect_urls:
-    - https://confetti-dev.anantsomani.com/api/slack/oauth_callback
+    - https://dashboard.tryconfetti.xyz/api/slack/oauth_callback
   scopes:
     bot:
       - chat:write
@@ -37,13 +37,13 @@ oauth_config:
       - im:write
 settings:
   event_subscriptions:
-    request_url: https://confetti-dev.anantsomani.com/api/slack/events
+    request_url: https://dashboard.tryconfetti.xyz/api/slack/events
     bot_events:
       - message.im
       - app_uninstalled
   interactivity:
     is_enabled: true
-    request_url: https://confetti-dev.anantsomani.com/api/slack/interactivity
+    request_url: https://dashboard.tryconfetti.xyz/api/slack/interactivity
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false
