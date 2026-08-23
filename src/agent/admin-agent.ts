@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import type { Db } from '@/db/client';
+import { type AgentArtifact, upsertOpenArtifact } from '@/db/queries/agent-sessions';
 import { listOptedOut, listPeople } from '@/db/queries/people';
 import type { Workspace } from '@/db/queries/workspaces';
 import {
@@ -16,9 +17,12 @@ import {
   proposedAgentActionSchema,
   sandboxEventPlanPayloadSchema,
   sandboxFoodOrderPayloadSchema,
+  scheduleReminderPayloadSchema,
 } from './command-types';
 import { AGENT_MAX_TOKENS, AGENT_MODEL, AGENT_TIMEOUT_MS } from './model';
+import { agentArtifactKindSchema, parseArtifactSlots } from './session-types';
 
+const ADMIN_AGENT_TIMEOUT_MS = Math.max(AGENT_TIMEOUT_MS, 60_000);
 const MAX_ROUNDS = 5;
 const MAX_ACTIONS = 3;
 const MAX_RESPONSE_CHARS = 700;
@@ -33,6 +37,8 @@ const TOOL_DOORDASH_SEARCH = 'doordash_search_restaurants' as const;
 const TOOL_DOORDASH_MENU = 'doordash_get_menu' as const;
 const TOOL_PROPOSE_DOORDASH_PREVIEW = 'propose_doordash_order_preview' as const;
 const TOOL_PROPOSE_EVENT_PLAN = 'propose_sandbox_event_plan' as const;
+const TOOL_UPDATE_ARTIFACT = 'update_artifact_slots' as const;
+const TOOL_PROPOSE_REMINDER = 'propose_reminder' as const;
 const TOOL_FINALIZE = 'finalize_response' as const;
 
 const SYSTEM_PROMPT = `You are Confetti's admin copilot inside Slack. Help an authorized workspace admin understand roster state, configure Confetti, and plan team moments.
@@ -52,7 +58,12 @@ const SYSTEM_PROMPT = `You are Confetti's admin copilot inside Slack. Help an au
 - Use context tools when they materially help.
 - For a DoorDash preview, search first, retrieve the selected restaurant's menu, and propose only exact returned IDs and item names. If the restaurant, menu item, quantity, required customization, delivery time, address, or maximum estimate is ambiguous, ask the user instead of guessing.
 - DoorDash discovery currently uses the connected DoorDash account's default address. Confetti has no workspace delivery-address setting and cannot retry with an address typed in Slack yet. Never claim otherwise.
-- Use a proposal tool only when the user explicitly asks for that action and provides every required field.
+- When the user supplies draft fields (address, date, time, headcount, restaurant), call update_artifact_slots and ask only for missing slots. Do not call DoorDash search or menu tools until the user has named a restaurant or search query.
+- Use a proposal tool only when the user explicitly asks for that action and every required field is present in this conversation or the persisted draft.
+- Ask only for missing or ambiguous slots. Restate resolved slots before proposing.
+- Persist newly provided fields with update_artifact_slots before asking the next question.
+- If an active draft exists and the user starts a different kind of task, ask them to say "start over" instead of replacing it.
+- Never invent store IDs, item IDs, dates, times, or reminder fire times.
 - Respect the workspace budget for sandbox actions.
 - Keep the final response concise and call finalize_response exactly once.
 `;
@@ -106,6 +117,16 @@ const proposeEventPlanInputSchema = sandboxEventPlanPayloadSchema
     estimatedCostCents: value.estimatedCostCents,
     summary: value.summary,
   }));
+
+const proposeReminderInputSchema = scheduleReminderPayloadSchema.extend({
+  summary: z.string().min(1).max(160),
+});
+
+const updateArtifactInputSchema = z.object({
+  kind: agentArtifactKindSchema,
+  slots: z.record(z.string(), z.unknown()),
+  replace_existing: z.boolean().optional(),
+});
 
 const finalizeResponseInputSchema = z.object({
   reply_text: z.string().min(1).max(MAX_RESPONSE_CHARS),
@@ -278,6 +299,39 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: TOOL_UPDATE_ARTIFACT,
+    description:
+      'Save confirmed fields from this conversation onto the active draft. Use after the user provides a date, time, restaurant, item, address, budget, or reminder time.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['doordash_order', 'sandbox_event_plan', 'reminder'],
+        },
+        slots: { type: 'object' },
+        replace_existing: { type: 'boolean' },
+      },
+      required: ['kind', 'slots'],
+    },
+  },
+  {
+    name: TOOL_PROPOSE_REMINDER,
+    description:
+      'Propose a one-time reminder DM after Slack approval. fireAt must be an ISO timestamp the user explicitly provided.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', maxLength: 160 },
+        fireAt: { type: 'string', format: 'date-time' },
+        note: { type: 'string', maxLength: 500 },
+        artifactId: { type: 'string' },
+        summary: { type: 'string', maxLength: 160 },
+      },
+      required: ['title', 'fireAt', 'summary'],
+    },
+  },
+  {
     name: TOOL_FINALIZE,
     description: 'Return the exact concise Slack response to the admin.',
     input_schema: {
@@ -296,6 +350,12 @@ type Logger = {
 
 export type AdminAgentToolCall = { name: string; input: unknown };
 
+export type AdminAgentSessionContext = {
+  id: string;
+  turns: Array<{ role: 'user' | 'assistant' | 'system'; text: string }>;
+  artifact: AgentArtifact | null;
+};
+
 export type RunAdminAgentArgs = {
   anthropic: Anthropic;
   db: Db;
@@ -304,6 +364,7 @@ export type RunAdminAgentArgs = {
   rawText: string;
   userId: string;
   log: Logger;
+  session?: AdminAgentSessionContext;
 };
 
 export type AdminAgentResult = {
@@ -334,6 +395,12 @@ export const runAdminAgent: RunAdminAgent = async (args) => {
         `Workspace timezone: ${args.workspace.timezone}`,
         `Workspace total per-event budget cents: ${args.workspace.defaultBudgetCents}`,
         `Requesting Slack user: ${args.userId}`,
+        args.session
+          ? `Active draft: ${args.session.artifact ? `${args.session.artifact.kind} status=${args.session.artifact.status} slots=${JSON.stringify(args.session.artifact.slots)} missing=${args.session.artifact.missingSlots.join(',')}` : 'none'}`
+          : 'Active draft: none',
+        args.session && args.session.turns.length > 0
+          ? `Prior turns:\n${args.session.turns.map((turn) => `${turn.role}: ${turn.text}`).join('\n')}`
+          : 'Prior turns: none',
         `Request: ${args.rawText.trim()}`,
       ].join('\n'),
     },
@@ -345,6 +412,13 @@ export const runAdminAgent: RunAdminAgent = async (args) => {
     stores: new Map(),
     menus: new Map(),
   };
+  const sessionState: { artifact: AgentArtifact | null } = {
+    artifact: args.session?.artifact ?? null,
+  };
+  const groundingText = [
+    ...(args.session?.turns.map((turn) => turn.text) ?? []),
+    args.rawText,
+  ].join('\n');
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     let response: Anthropic.Message;
@@ -388,7 +462,14 @@ export const runAdminAgent: RunAdminAgent = async (args) => {
 
     for (const toolUse of toolUses) {
       toolCalls.push({ name: toolUse.name, input: toolUse.input });
-      const result = await runTool(args, toolUse, proposedActions, doorDashDiscovery);
+      const result = await runTool(
+        args,
+        toolUse,
+        proposedActions,
+        doorDashDiscovery,
+        sessionState,
+        groundingText,
+      );
       if (toolUse.name === TOOL_FINALIZE && result.ok) finalReply = result.value;
       toolResults.push({
         type: 'tool_result',
@@ -419,6 +500,8 @@ const runTool = async (
   toolUse: Anthropic.ToolUseBlock,
   proposedActions: ProposedAgentAction[],
   doorDashDiscovery: DoorDashDiscoveryState,
+  sessionState: { artifact: AgentArtifact | null },
+  groundingText: string,
 ): Promise<Result<string, string>> => {
   switch (toolUse.name) {
     case TOOL_GET_WORKSPACE_SETTINGS:
@@ -460,7 +543,7 @@ const runTool = async (
       const parsed = proposeSetBudgetInputSchema.safeParse(toolUse.input);
       if (!parsed.success) return err('invalid budget proposal');
       const amountCents = Math.round(parsed.data.amount_usd * 100);
-      if (!requestContainsDollarAmount(args.rawText, amountCents)) {
+      if (!requestContainsDollarAmount(groundingText, amountCents)) {
         return err('the proposed budget amount was not explicitly present in the user request');
       }
       return addAction(proposedActions, {
@@ -493,10 +576,10 @@ const runTool = async (
         return err('food-order estimate exceeds the workspace budget');
       }
       if (
-        !requestContainsPhrase(args.rawText, parsed.data.restaurant) ||
-        !requestContainsPhrase(args.rawText, parsed.data.deliveryAddress) ||
-        !requestContainsNumber(args.rawText, parsed.data.headcount) ||
-        !requestContainsDollarAmount(args.rawText, parsed.data.estimatedCostCents)
+        !requestContainsPhrase(groundingText, parsed.data.restaurant) ||
+        !requestContainsPhrase(groundingText, parsed.data.deliveryAddress) ||
+        !requestContainsNumber(groundingText, parsed.data.headcount) ||
+        !requestContainsDollarAmount(groundingText, parsed.data.estimatedCostCents)
       ) {
         return err(
           'restaurant, address, headcount, and estimate must be explicitly grounded in the user request',
@@ -604,7 +687,7 @@ const runTool = async (
       if (parsed.data.estimatedCostCents > args.workspace.defaultBudgetCents) {
         return err('DoorDash preview estimate exceeds the workspace budget');
       }
-      if (!requestContainsDollarAmount(args.rawText, parsed.data.estimatedCostCents)) {
+      if (!requestContainsDollarAmount(groundingText, parsed.data.estimatedCostCents)) {
         return err('the DoorDash maximum estimate must be explicitly present in the user request');
       }
       const store = doorDashDiscovery.stores.get(parsed.data.storeId);
@@ -653,10 +736,10 @@ const runTool = async (
         return err('event-plan estimate exceeds the workspace budget');
       }
       if (
-        !requestContainsPhrase(args.rawText, parsed.data.title) ||
-        !requestContainsPhrase(args.rawText, parsed.data.location) ||
-        !requestContainsNumber(args.rawText, parsed.data.headcount) ||
-        !requestContainsDollarAmount(args.rawText, parsed.data.estimatedCostCents)
+        !requestContainsPhrase(groundingText, parsed.data.title) ||
+        !requestContainsPhrase(groundingText, parsed.data.location) ||
+        !requestContainsNumber(groundingText, parsed.data.headcount) ||
+        !requestContainsDollarAmount(groundingText, parsed.data.estimatedCostCents)
       ) {
         return err(
           'title, location, headcount, and estimate must be explicitly grounded in the user request',
@@ -674,6 +757,70 @@ const runTool = async (
           estimatedCostCents: parsed.data.estimatedCostCents,
         },
         estimatedCostCents: parsed.data.estimatedCostCents,
+      });
+    }
+
+    case TOOL_UPDATE_ARTIFACT: {
+      if (!args.session) return err('conversation memory is unavailable for this request');
+      const parsed = updateArtifactInputSchema.safeParse(toolUse.input);
+      if (!parsed.success) return err('artifact update is invalid');
+      const slots = parseArtifactSlots(parsed.data.kind, parsed.data.slots);
+      if (!slots) return err('artifact slots failed validation');
+      const existing = sessionState.artifact;
+      if (existing && existing.kind !== parsed.data.kind && !parsed.data.replace_existing) {
+        return err(
+          `An active ${existing.kind} draft already exists. Ask the user to say "start over" before replacing it.`,
+        );
+      }
+      const artifact = await upsertOpenArtifact(args.db, {
+        sessionId: args.session.id,
+        workspaceId: args.workspace.id,
+        kind: parsed.data.kind,
+        slots,
+      });
+      sessionState.artifact = artifact;
+      return ok(
+        JSON.stringify({
+          kind: artifact.kind,
+          status: artifact.status,
+          slots: artifact.slots,
+          missingSlots: artifact.missingSlots,
+        }),
+      );
+    }
+
+    case TOOL_PROPOSE_REMINDER: {
+      const parsed = proposeReminderInputSchema.safeParse(toolUse.input);
+      if (!parsed.success) return err('reminder proposal is missing required details');
+      if (
+        !requestContainsPhrase(groundingText, parsed.data.title) ||
+        !requestContainsPhrase(groundingText, parsed.data.fireAt)
+      ) {
+        return err('reminder title and fire time must be explicitly grounded in this conversation');
+      }
+      if (args.session) {
+        const artifact = await upsertOpenArtifact(args.db, {
+          sessionId: args.session.id,
+          workspaceId: args.workspace.id,
+          kind: 'reminder',
+          slots: {
+            title: parsed.data.title,
+            fireAt: parsed.data.fireAt,
+            ...(parsed.data.note ? { note: parsed.data.note } : {}),
+          },
+        });
+        sessionState.artifact = artifact;
+      }
+      return addAction(proposedActions, {
+        kind: 'schedule_reminder',
+        summary: parsed.data.summary,
+        payload: {
+          title: parsed.data.title,
+          fireAt: parsed.data.fireAt,
+          note: parsed.data.note,
+          artifactId: sessionState.artifact?.id,
+        },
+        estimatedCostCents: null,
       });
     }
 
@@ -749,8 +896,8 @@ const callWithTimeout = async (
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(
-      () => reject(new Error(`admin agent timed out after ${AGENT_TIMEOUT_MS}ms`)),
-      AGENT_TIMEOUT_MS,
+      () => reject(new Error(`admin agent timed out after ${ADMIN_AGENT_TIMEOUT_MS}ms`)),
+      ADMIN_AGENT_TIMEOUT_MS,
     );
   });
   try {

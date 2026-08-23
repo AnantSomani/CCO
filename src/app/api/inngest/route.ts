@@ -1,6 +1,7 @@
 import { serve } from 'inngest/next';
 import { agentAuditRetention } from '@/jobs/agent-audit-retention';
 import { agentCommand } from '@/jobs/agent-command';
+import { agentReminder, agentReminderSweep } from '@/jobs/agent-reminder';
 import { inngest } from '@/jobs/client';
 import { dailyScan } from '@/jobs/daily-scan';
 import { dayOfPost } from '@/jobs/day-of-post';
@@ -20,6 +21,8 @@ const placeholderHello = inngest.createFunction(
   },
 );
 
+export const maxDuration = 180;
+
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
@@ -30,5 +33,7 @@ export const { GET, POST, PUT } = serve({
     agentCommand,
     executeAgentAction,
     agentAuditRetention,
+    agentReminder,
+    agentReminderSweep,
   ],
 });

@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db/client';
+import { inngest } from '@/jobs/client';
 import { log } from '@/lib/log';
 import { getSlackClient } from '@/slack/client';
 import { handleMessageIm } from '@/slack/handlers/messages';
@@ -59,14 +60,18 @@ export const POST = async (req: NextRequest): Promise<NextResponse> => {
   }
 
   if (inner.type === 'message') {
-    const result = await handleMessageIm({ db, getSlackClient }, envelope.team_id, {
-      user: inner.user,
-      text: inner.text,
-      ts: inner.ts,
-      bot_id: inner.bot_id,
-      subtype: inner.subtype,
-      thread_ts: inner.thread_ts,
-    });
+    const result = await handleMessageIm(
+      { db, getSlackClient, emitter: inngest },
+      envelope.team_id,
+      {
+        user: inner.user,
+        text: inner.text,
+        ts: inner.ts,
+        bot_id: inner.bot_id,
+        subtype: inner.subtype,
+        thread_ts: inner.thread_ts,
+      },
+    );
     if (!result.ok) log.warn('message handler failed', { error: result.error });
     return new NextResponse('', { status: 200 });
   }

@@ -76,4 +76,61 @@ describe('enqueueAgentCommand', () => {
 
     expect(result).toEqual({ ok: true, value: { status: 'rate_limited' } });
   });
+
+  it('attaches queued requests to one open session', async () => {
+    const db = await seed();
+    const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+    await enqueueAgentCommand(db, recordingEmitter(events), {
+      slackTeamId: 'T_AGENT',
+      slackUserId: 'U_ADMIN',
+      requestText: 'Order pizza on August 22nd',
+      idempotencyKey: 'session-1',
+    });
+    await enqueueAgentCommand(db, recordingEmitter(events), {
+      slackTeamId: 'T_AGENT',
+      slackUserId: 'U_ADMIN',
+      requestText: '7pm',
+      idempotencyKey: 'session-2',
+    });
+    const { agentRuns, agentSessionTurns } = await import('@/db/schema');
+    const runs = await db.select().from(agentRuns);
+    const turns = await db.select().from(agentSessionTurns);
+    expect(new Set(runs.map((run) => run.sessionId)).size).toBe(1);
+    expect(turns.map((turn) => turn.text)).toEqual(['Order pizza on August 22nd', '7pm']);
+  });
+
+  it('keeps DoorDash slots when a later /confetti continues the same session', async () => {
+    const db = await seed();
+    const { getOrCreateOpenSession, getOpenArtifact, upsertOpenArtifact } = await import(
+      '@/db/queries/agent-sessions'
+    );
+    const session = await getOrCreateOpenSession(db, {
+      workspaceId: WORKSPACE_ID,
+      slackUserId: 'U_ADMIN',
+    });
+    await upsertOpenArtifact(db, {
+      sessionId: session.id,
+      workspaceId: WORKSPACE_ID,
+      kind: 'doordash_order',
+      slots: {
+        restaurant: 'Local Pizza',
+        deliveryAt: '2026-08-22T19:00:00.000Z',
+        estimatedCostCents: 5000,
+      },
+    });
+    const result = await enqueueAgentCommand(db, recordingEmitter([]), {
+      slackTeamId: 'T_AGENT',
+      slackUserId: 'U_ADMIN',
+      requestText: 'also get garlic knots',
+      idempotencyKey: 'session-confetti-followup',
+    });
+    expect(result.ok && result.value.status).toBe('queued');
+    const artifact = await getOpenArtifact(db, session.id, WORKSPACE_ID);
+    expect(artifact?.kind).toBe('doordash_order');
+    expect(artifact?.slots.restaurant).toBe('Local Pizza');
+    expect(artifact?.slots.deliveryAt).toBe('2026-08-22T19:00:00.000Z');
+    const { agentRuns } = await import('@/db/schema');
+    const runs = await db.select().from(agentRuns);
+    expect(runs.every((run) => run.sessionId === session.id)).toBe(true);
+  });
 });

@@ -6,6 +6,7 @@ export const agentActionKindSchema = z.enum([
   'sandbox_food_order',
   'doordash_order_preview',
   'sandbox_event_plan',
+  'schedule_reminder',
 ]);
 
 export type AgentActionKind = z.infer<typeof agentActionKindSchema>;
@@ -65,6 +66,13 @@ export const sandboxEventPlanPayloadSchema = z.object({
   estimatedCostCents: z.number().int().nonnegative().max(1_000_000),
 });
 
+export const scheduleReminderPayloadSchema = z.object({
+  title: z.string().min(1).max(160),
+  fireAt: z.string().datetime({ offset: true }),
+  note: z.string().min(1).max(500).optional(),
+  artifactId: z.string().uuid().optional(),
+});
+
 export const proposedAgentActionSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('set_default_budget'),
@@ -95,6 +103,12 @@ export const proposedAgentActionSchema = z.discriminatedUnion('kind', [
     summary: z.string().min(1).max(160),
     payload: sandboxEventPlanPayloadSchema,
     estimatedCostCents: z.number().int().nonnegative(),
+  }),
+  z.object({
+    kind: z.literal('schedule_reminder'),
+    summary: z.string().min(1).max(160),
+    payload: scheduleReminderPayloadSchema,
+    estimatedCostCents: z.null(),
   }),
 ]);
 

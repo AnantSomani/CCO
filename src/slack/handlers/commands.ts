@@ -66,6 +66,9 @@ export const getAgentAcknowledgement = (
     }
     return "I'm checking the sandbox order against your budget and safety rules. I'll DM you the proposal or explain what needs adjusting.";
   }
+  if (/\b(remind|reminder|nudge)\b/.test(request)) {
+    return "I'm saving that reminder draft. I'll DM you what I have so far; scheduling it will require approval.";
+  }
   if (/\b(event|venue|offsite|party|outing|retreat)\b/.test(request)) {
     return "I'm preparing the sandbox event plan. I'll DM you the proposal or explain what needs adjusting.";
   }

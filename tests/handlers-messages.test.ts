@@ -13,7 +13,21 @@ import { upsertWorkspace } from '@/db/queries/workspaces';
 import { people } from '@/db/schema';
 import { handleMessageIm } from '@/slack/handlers/messages';
 import { createTestDb } from './db';
-import { type RecordingSlackClient, recordingSlackClientFactory } from './slack-stub';
+import {
+  type RecordingSlackClient,
+  recordingEmitter,
+  recordingSlackClientFactory,
+} from './slack-stub';
+
+const messageCtx = (
+  db: Db,
+  slack: RecordingSlackClient,
+  events: Array<{ name: string; data: Record<string, unknown> }> = [],
+) => ({
+  db,
+  getSlackClient: recordingSlackClientFactory(slack),
+  emitter: recordingEmitter(events),
+});
 
 const setupAdminWithPostedEvent = async (db: Db) => {
   const slackTeamId = `T_${Math.random().toString(36).slice(2, 10)}`;
@@ -65,11 +79,11 @@ describe('handleMessageIm', () => {
     const db = await createTestDb();
     const { slackTeamId, postId } = await setupAdminWithPostedEvent(db);
     const slack: RecordingSlackClient = {};
-    const result = await handleMessageIm(
-      { db, getSlackClient: recordingSlackClientFactory(slack) },
-      slackTeamId,
-      { user: 'U_ADMIN', text: '45', ts: 'm1' },
-    );
+    const result = await handleMessageIm(messageCtx(db, slack), slackTeamId, {
+      user: 'U_ADMIN',
+      text: '45',
+      ts: 'm1',
+    });
     expect(result.ok && result.value.kind).toBe('spend_logged');
     const post = await getPostByEventId(db, (await db.query.events.findFirst())?.id ?? '');
     expect(post?.actualSpendCents).toBe(4500);
@@ -80,36 +94,42 @@ describe('handleMessageIm', () => {
   it('parses "$45.50" → 4550 cents', async () => {
     const db = await createTestDb();
     const { slackTeamId } = await setupAdminWithPostedEvent(db);
-    const result = await handleMessageIm(
-      { db, getSlackClient: recordingSlackClientFactory({}) },
-      slackTeamId,
-      { user: 'U_ADMIN', text: '$45.50', ts: 'm1' },
-    );
+    const result = await handleMessageIm(messageCtx(db, {}), slackTeamId, {
+      user: 'U_ADMIN',
+      text: '$45.50',
+      ts: 'm1',
+    });
     expect(result.ok && result.value.kind).toBe('spend_logged');
   });
 
-  it('rejects "forty-five" with a friendly parse error', async () => {
+  it('does not treat non-numeric replies as spend logging', async () => {
     const db = await createTestDb();
     const { slackTeamId } = await setupAdminWithPostedEvent(db);
     const slack: RecordingSlackClient = {};
-    const result = await handleMessageIm(
-      { db, getSlackClient: recordingSlackClientFactory(slack) },
-      slackTeamId,
-      { user: 'U_ADMIN', text: 'forty-five', ts: 'm1' },
+    const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const result = await handleMessageIm(messageCtx(db, slack, events), slackTeamId, {
+      user: 'U_ADMIN',
+      text: 'forty-five',
+      ts: 'm1',
+    });
+    expect(result.ok && result.value.kind).toBe('agent_queued');
+    expect(events).toHaveLength(1);
+    const post = await findMostRecentUnloggedPostForWorkspace(
+      db,
+      (await db.query.workspaces.findFirst())?.id ?? '',
     );
-    expect(result.ok && result.value.kind).toBe('spend_parse_error');
-    expect(slack.posts?.[0]?.text).toMatch(/couldn't parse/);
+    expect(post?.actualSpendCents ?? null).toBeNull();
   });
 
   it('handles `skip my birthday` for a person on the roster', async () => {
     const db = await createTestDb();
     const { workspaceId, slackTeamId } = await setupAdminWithPostedEvent(db);
     const slack: RecordingSlackClient = {};
-    const result = await handleMessageIm(
-      { db, getSlackClient: recordingSlackClientFactory(slack) },
-      slackTeamId,
-      { user: 'U_ALICE', text: 'skip my birthday', ts: 'm1' },
-    );
+    const result = await handleMessageIm(messageCtx(db, slack), slackTeamId, {
+      user: 'U_ALICE',
+      text: 'skip my birthday',
+      ts: 'm1',
+    });
     expect(result.ok && result.value.kind).toBe('opted_out');
     const alice = await db.query.people.findFirst({
       where: eq(people.slackUserId, 'U_ALICE'),
@@ -124,11 +144,11 @@ describe('handleMessageIm', () => {
     const { slackTeamId } = await setupAdminWithPostedEvent(db);
     await db.update(people).set({ optedOut: true }).where(eq(people.slackUserId, 'U_ALICE'));
     const slack: RecordingSlackClient = {};
-    const result = await handleMessageIm(
-      { db, getSlackClient: recordingSlackClientFactory(slack) },
-      slackTeamId,
-      { user: 'U_ALICE', text: 'include my birthday', ts: 'm1' },
-    );
+    const result = await handleMessageIm(messageCtx(db, slack), slackTeamId, {
+      user: 'U_ALICE',
+      text: 'include my birthday',
+      ts: 'm1',
+    });
     expect(result.ok && result.value.kind).toBe('opted_in');
     const alice = await db.query.people.findFirst({
       where: eq(people.slackUserId, 'U_ALICE'),
@@ -140,11 +160,12 @@ describe('handleMessageIm', () => {
     const db = await createTestDb();
     const { slackTeamId } = await setupAdminWithPostedEvent(db);
     const slack: RecordingSlackClient = {};
-    const result = await handleMessageIm(
-      { db, getSlackClient: recordingSlackClientFactory(slack) },
-      slackTeamId,
-      { user: 'U_ADMIN', text: '45', ts: 'm1', bot_id: 'B1' },
-    );
+    const result = await handleMessageIm(messageCtx(db, slack), slackTeamId, {
+      user: 'U_ADMIN',
+      text: '45',
+      ts: 'm1',
+      bot_id: 'B1',
+    });
     expect(result.ok && result.value.kind).toBe('ignored');
     expect(slack.posts ?? []).toHaveLength(0);
   });
@@ -152,11 +173,12 @@ describe('handleMessageIm', () => {
   it('ignores thread replies', async () => {
     const db = await createTestDb();
     const { slackTeamId } = await setupAdminWithPostedEvent(db);
-    const result = await handleMessageIm(
-      { db, getSlackClient: recordingSlackClientFactory({}) },
-      slackTeamId,
-      { user: 'U_ADMIN', text: '45', ts: 'm1', thread_ts: 'parent' },
-    );
+    const result = await handleMessageIm(messageCtx(db, {}), slackTeamId, {
+      user: 'U_ADMIN',
+      text: '45',
+      ts: 'm1',
+      thread_ts: 'parent',
+    });
     expect(result.ok && result.value.kind).toBe('ignored');
   });
 
@@ -165,11 +187,11 @@ describe('handleMessageIm', () => {
     const { slackTeamId } = await setupAdminWithPostedEvent(db);
     const slack: RecordingSlackClient = {};
     // Use a fresh slack user not on people or users.
-    const result = await handleMessageIm(
-      { db, getSlackClient: recordingSlackClientFactory(slack) },
-      slackTeamId,
-      { user: 'U_RANDOM', text: 'hi there', ts: 'm1' },
-    );
+    const result = await handleMessageIm(messageCtx(db, slack), slackTeamId, {
+      user: 'U_RANDOM',
+      text: 'hi there',
+      ts: 'm1',
+    });
     expect(result.ok && result.value.kind).toBe('help');
     expect(slack.posts?.[0]?.text).toMatch(/I'm Confetti/);
   });
@@ -178,11 +200,11 @@ describe('handleMessageIm', () => {
     const db = await createTestDb();
     const { slackTeamId } = await setupAdminWithPostedEvent(db);
     const slack: RecordingSlackClient = {};
-    const result = await handleMessageIm(
-      { db, getSlackClient: recordingSlackClientFactory(slack) },
-      slackTeamId,
-      { user: 'U_NOTONROSTER', text: 'skip my birthday', ts: 'm1' },
-    );
+    const result = await handleMessageIm(messageCtx(db, slack), slackTeamId, {
+      user: 'U_NOTONROSTER',
+      text: 'skip my birthday',
+      ts: 'm1',
+    });
     expect(result.ok && result.value.kind).toBe('opt_no_match');
     expect(slack.posts?.[0]?.text).toMatch(/couldn't find you/);
   });
@@ -195,11 +217,91 @@ describe('handleMessageIm', () => {
     if (!unlogged) throw new Error('seed unlogged missing');
     const { updatePostSpend } = await import('@/db/queries/posts');
     await updatePostSpend(db, unlogged.id, 1000);
-    const result = await handleMessageIm(
-      { db, getSlackClient: recordingSlackClientFactory({}) },
-      slackTeamId,
-      { user: 'U_ADMIN', text: '45', ts: 'm1' },
+    const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const result = await handleMessageIm(messageCtx(db, {}, events), slackTeamId, {
+      user: 'U_ADMIN',
+      text: '45',
+      ts: 'm1',
+    });
+    expect(result.ok && result.value.kind).toBe('agent_queued');
+    expect(events).toHaveLength(1);
+  });
+
+  it('logs spend `45` even when an agent session is already open', async () => {
+    const db = await createTestDb();
+    const { slackTeamId, workspaceId } = await setupAdminWithPostedEvent(db);
+    const { getOrCreateOpenSession } = await import('@/db/queries/agent-sessions');
+    await getOrCreateOpenSession(db, {
+      workspaceId,
+      slackUserId: 'U_ADMIN',
+    });
+    const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const result = await handleMessageIm(messageCtx(db, {}, events), slackTeamId, {
+      user: 'U_ADMIN',
+      text: '45',
+      ts: 'm-spend-conflict',
+    });
+    expect(result.ok && result.value.kind).toBe('spend_logged');
+    expect(events).toHaveLength(0);
+  });
+
+  it('continues an admin DM into the active agent session', async () => {
+    const db = await createTestDb();
+    const { slackTeamId } = await setupAdminWithPostedEvent(db);
+    const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const first = await handleMessageIm(messageCtx(db, {}, events), slackTeamId, {
+      user: 'U_ADMIN',
+      text: 'plan pizza for August 22nd',
+      ts: 'm-date',
+    });
+    const second = await handleMessageIm(messageCtx(db, {}, events), slackTeamId, {
+      user: 'U_ADMIN',
+      text: '7pm',
+      ts: 'm-time',
+    });
+    expect(first.ok && first.value.kind).toBe('agent_queued');
+    expect(second.ok && second.value.kind).toBe('agent_queued');
+    expect(events).toHaveLength(2);
+  });
+
+  it('continues a matching agent thread reply and ignores other threads', async () => {
+    const db = await createTestDb();
+    const { slackTeamId, workspaceId } = await setupAdminWithPostedEvent(db);
+    const { getOrCreateOpenSession, setSessionThread } = await import(
+      '@/db/queries/agent-sessions'
     );
+    const session = await getOrCreateOpenSession(db, {
+      workspaceId,
+      slackUserId: 'U_ADMIN',
+    });
+    await setSessionThread(db, session.id, workspaceId, 'D_ADMIN', 'thread.1');
+    const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const continued = await handleMessageIm(messageCtx(db, {}, events), slackTeamId, {
+      user: 'U_ADMIN',
+      text: '7pm',
+      ts: 'm-thread',
+      thread_ts: 'thread.1',
+    });
+    const ignored = await handleMessageIm(messageCtx(db, {}, events), slackTeamId, {
+      user: 'U_ADMIN',
+      text: '7pm',
+      ts: 'm-other',
+      thread_ts: 'other.thread',
+    });
+    expect(continued.ok && continued.value.kind).toBe('agent_queued');
+    expect(ignored.ok && ignored.value.kind).toBe('ignored');
+  });
+
+  it('does not continue sessions for non-admin users', async () => {
+    const db = await createTestDb();
+    const { slackTeamId } = await setupAdminWithPostedEvent(db);
+    const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const result = await handleMessageIm(messageCtx(db, {}, events), slackTeamId, {
+      user: 'U_ALICE',
+      text: 'August 22nd',
+      ts: 'm-member',
+    });
     expect(result.ok && result.value.kind).toBe('help');
+    expect(events).toHaveLength(0);
   });
 });

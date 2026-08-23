@@ -4,6 +4,7 @@ import {
   doorDashOrderPreviewPayloadSchema,
   sandboxEventPlanPayloadSchema,
   sandboxFoodOrderPayloadSchema,
+  scheduleReminderPayloadSchema,
   setCelebrationChannelPayloadSchema,
   setDefaultBudgetPayloadSchema,
 } from '@/agent/command-types';
@@ -33,6 +34,8 @@ const kindLabel = (kind: AgentActionKind): string => {
       return 'DoorDash order preview';
     case 'sandbox_event_plan':
       return 'Sandbox event plan';
+    case 'schedule_reminder':
+      return 'Reminder';
   }
 };
 
@@ -141,6 +144,17 @@ const formatActionDetails = (kind: AgentActionKind, payload: unknown): string =>
         `*Headcount:* ${parsed.data.headcount}`,
         `*Agenda:* ${escapeMrkdwn(parsed.data.agenda)}`,
       ].join('\n');
+    }
+    case 'schedule_reminder': {
+      const parsed = scheduleReminderPayloadSchema.safeParse(payload);
+      if (!parsed.success) return 'Invalid reminder payload';
+      return [
+        `*Title:* ${escapeMrkdwn(parsed.data.title)}`,
+        `*When:* ${escapeMrkdwn(parsed.data.fireAt)}`,
+        parsed.data.note ? `*Note:* ${escapeMrkdwn(parsed.data.note)}` : null,
+      ]
+        .filter((line): line is string => line !== null)
+        .join('\n');
     }
   }
 };

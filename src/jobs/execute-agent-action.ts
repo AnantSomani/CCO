@@ -2,6 +2,7 @@ import {
   doorDashOrderPreviewPayloadSchema,
   sandboxEventPlanPayloadSchema,
   sandboxFoodOrderPayloadSchema,
+  scheduleReminderPayloadSchema,
   setCelebrationChannelPayloadSchema,
   setDefaultBudgetPayloadSchema,
 } from '@/agent/command-types';
@@ -12,6 +13,7 @@ import {
   failAgentAction,
   getAgentAction,
 } from '@/db/queries/agent-operations';
+import { setArtifactStatus } from '@/db/queries/agent-sessions';
 import { getWorkspaceById, setCelebrationChannel, setDefaultBudget } from '@/db/queries/workspaces';
 import {
   buildDoorDashIntent,
@@ -22,13 +24,20 @@ import { env } from '@/lib/env';
 import { err, ok, type Result } from '@/lib/result';
 import { buildAgentActionResolved } from '@/slack/blocks/agent-action';
 import type { GetSlackClient, SlackClient } from '@/slack/client';
-import { EVENT_NAME_AGENT_ACTION_APPROVED } from '@/slack/ids';
+import { EVENT_NAME_AGENT_ACTION_APPROVED, EVENT_NAME_AGENT_REMINDER_DUE } from '@/slack/ids';
 import { inngest } from './client';
+
+type ReminderEmitter = (input: {
+  artifactId: string;
+  workspaceId: string;
+  fireAt: Date;
+}) => Promise<void>;
 
 type RunAgentActionArgs = {
   db: Db;
   getSlackClient: GetSlackClient;
   doorDash?: DdCliClient;
+  emitReminder?: ReminderEmitter;
   actionId: string;
 };
 
@@ -36,6 +45,7 @@ export const runAgentAction = async ({
   db,
   getSlackClient,
   doorDash,
+  emitReminder,
   actionId,
 }: RunAgentActionArgs): Promise<Result<{ status: 'completed' | 'already_finished' }, string>> => {
   const existing = await getAgentAction(db, actionId);
@@ -51,7 +61,14 @@ export const runAgentAction = async ({
   const action = await beginAgentActionExecution(db, actionId);
   if (!action) return err(`agent action is not approved: ${actionId}`);
 
-  const execution = await execute(action, workspace.defaultBudgetCents, slack.value, db, doorDash);
+  const execution = await execute(
+    action,
+    workspace.defaultBudgetCents,
+    slack.value,
+    db,
+    doorDash,
+    emitReminder,
+  );
   if (!execution.ok) {
     await failAgentAction(db, action.id, execution.error);
     await updateActionMessage(
@@ -89,6 +106,7 @@ const execute = async (
   slack: SlackClient,
   db: Db,
   doorDash?: DdCliClient,
+  emitReminder?: ReminderEmitter,
 ): Promise<Result<Record<string, unknown>, string>> => {
   switch (action.kind) {
     case 'set_default_budget': {
@@ -176,6 +194,44 @@ const execute = async (
       });
     }
 
+    case 'schedule_reminder': {
+      const parsed = scheduleReminderPayloadSchema.safeParse(action.payload);
+      if (!parsed.success) return err('invalid_reminder_payload');
+      if (!parsed.data.artifactId) return err('reminder_artifact_missing');
+      const fireAt = new Date(parsed.data.fireAt);
+      if (Number.isNaN(fireAt.getTime())) return err('invalid_reminder_time');
+      const artifact = await setArtifactStatus(
+        db,
+        parsed.data.artifactId,
+        action.workspaceId,
+        'scheduled',
+        { fireAt },
+      );
+      if (!artifact) return err('reminder_artifact_not_found');
+      if (emitReminder) {
+        await emitReminder({
+          artifactId: artifact.id,
+          workspaceId: action.workspaceId,
+          fireAt,
+        });
+      } else {
+        await inngest.send({
+          name: EVENT_NAME_AGENT_REMINDER_DUE,
+          ts: fireAt.getTime(),
+          data: {
+            artifactId: artifact.id,
+            workspaceId: action.workspaceId,
+          },
+        });
+      }
+      return ok({
+        scheduled: true,
+        title: parsed.data.title,
+        fireAt: parsed.data.fireAt,
+        artifactId: artifact.id,
+      });
+    }
+
     case 'sandbox_event_plan': {
       const parsed = sandboxEventPlanPayloadSchema.safeParse(action.payload);
       if (!parsed.success) return err('invalid_event_plan_payload');
@@ -218,6 +274,9 @@ const updateActionMessage = async (
 
 const formatExecutionDetail = (kind: string, result: Record<string, unknown>): string => {
   if (kind === 'doordash_order_preview') return formatDoorDashPreview(result);
+  if (kind === 'schedule_reminder') {
+    return `Reminder scheduled for ${String(result.fireAt ?? 'the requested time')}. I will DM you once.`;
+  }
   if (kind.startsWith('sandbox_')) {
     const id = result.mockOrderId ?? result.mockPlanId;
     return `Sandbox execution complete. Reference: \`${String(id)}\`. No vendor was contacted and no money was spent.`;

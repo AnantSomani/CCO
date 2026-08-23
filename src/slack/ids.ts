@@ -32,3 +32,4 @@ export const EVENT_NAME_EVENT_CREATED = 'confetti/event.created' as const;
 export const EVENT_NAME_DAY_OF_SCHEDULED = 'confetti/day-of.scheduled' as const;
 export const EVENT_NAME_AGENT_COMMAND_REQUESTED = 'confetti/agent-command.requested' as const;
 export const EVENT_NAME_AGENT_ACTION_APPROVED = 'confetti/agent-action.approved' as const;
+export const EVENT_NAME_AGENT_REMINDER_DUE = 'confetti/agent-reminder.due' as const;

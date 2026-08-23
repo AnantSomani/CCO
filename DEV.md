@@ -157,6 +157,9 @@ DoorDash preview test (opt-in):
    explicitly stating that no order was submitted and no payment method was charged.
 7. Verify in DoorDash that there is an open cart and no new order in order history.
 
+Follow-up admin DMs and replies in the agent’s own DM thread continue the same conversation.
+Say `what do you have so far`, `start over`, or `cancel` to inspect or clear the draft.
+
 DoorDash preview is disabled by default. The integration has no code path for `order submit`
 or `order checkout-url`.
 

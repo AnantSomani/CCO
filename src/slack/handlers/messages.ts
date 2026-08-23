@@ -1,4 +1,5 @@
 import type { Db } from '@/db/client';
+import { getSessionByThread } from '@/db/queries/agent-sessions';
 import { setOptedOutBySlackUser } from '@/db/queries/people';
 import {
   findMostRecentUnloggedPostForWorkspace,
@@ -10,16 +11,21 @@ import { getWorkspaceBySlackTeamId } from '@/db/queries/workspaces';
 import { log as defaultLog } from '@/lib/log';
 import { ok, type Result } from '@/lib/result';
 import type { GetSlackClient } from '@/slack/client';
+import { enqueueAgentCommand } from '@/slack/enqueue-agent-command';
 
 type Logger = { info: (m: string, meta?: Record<string, unknown>) => void };
+
+type EventEmitter = {
+  send: (event: { name: string; data: Record<string, unknown> }) => Promise<unknown>;
+};
 
 export type MessageHandlerCtx = {
   db: Db;
   getSlackClient: GetSlackClient;
+  emitter: EventEmitter;
   log?: Logger;
 };
 
-// Slack `message.im` event shape (inner). We only consume what we need.
 export type MessageImEvent = {
   user?: string;
   text: string;
@@ -31,12 +37,8 @@ export type MessageImEvent = {
 
 type ParsedMoney = { ok: true; cents: number } | { ok: false };
 
-// Lenient on "45" and "$45.50"; rejects "forty-five" and free-form text. The
-// number_input rule "first numeric token only" matched what the prompt asked
-// for (`45`, `$45` → parse; `forty-five` → fail).
 const parseMoney = (text: string): ParsedMoney => {
   const trimmed = text.trim();
-  // Accept optional leading $, then digits and optional decimal.
   const match = trimmed.match(/^\$?(\d+)(?:\.(\d{1,2}))?$/);
   if (!match) return { ok: false };
   const dollars = Number(match[1]);
@@ -54,10 +56,10 @@ const HELP_TEXT =
 export type MessageHandlerOutcome =
   | { kind: 'ignored'; reason: string }
   | { kind: 'spend_logged'; cents: number }
-  | { kind: 'spend_parse_error' }
   | { kind: 'opted_out'; personName: string }
   | { kind: 'opted_in'; personName: string }
   | { kind: 'opt_no_match' }
+  | { kind: 'agent_queued'; runId: string }
   | { kind: 'help' };
 
 export const handleMessageIm = async (
@@ -67,12 +69,9 @@ export const handleMessageIm = async (
 ): Promise<Result<MessageHandlerOutcome, string>> => {
   const log = ctx.log ?? defaultLog;
 
-  // Filter our own messages so we don't infinite-loop on DMs Confetti sends.
   if (event.bot_id || event.subtype === 'bot_message') {
     return ok({ kind: 'ignored', reason: 'bot_message' });
   }
-  // Only handle top-level DMs.
-  if (event.thread_ts) return ok({ kind: 'ignored', reason: 'thread_reply' });
   if (!event.user) return ok({ kind: 'ignored', reason: 'no_user' });
 
   const workspace = await getWorkspaceBySlackTeamId(ctx.db, teamId);
@@ -86,7 +85,6 @@ export const handleMessageIm = async (
     await slack.value.postMessage({ channel: event.user, text });
   };
 
-  // ─── opt-out / opt-in (anyone, not just admin) ────────────────────────
   if (OPT_OUT_RE.test(event.text)) {
     const updated = await setOptedOutBySlackUser(ctx.db, workspace.id, event.user, true);
     if (!updated) {
@@ -111,32 +109,61 @@ export const handleMessageIm = async (
     return ok({ kind: 'opted_in', personName: updated.name });
   }
 
-  // ─── spend log (admin only) ──────────────────────────────────────────
   const user = await getUserBySlackUserId(ctx.db, workspace.id, event.user);
-  if (user?.isAdmin) {
+  if (event.thread_ts) {
+    const session = user?.isAdmin
+      ? await getSessionByThread(ctx.db, workspace.id, event.user, event.thread_ts)
+      : null;
+    if (!session) return ok({ kind: 'ignored', reason: 'thread_reply' });
+    return enqueueContinuation(ctx, teamId, event, event.thread_ts);
+  }
+
+  const parsedMoney = parseMoney(event.text);
+  if (user?.isAdmin && parsedMoney.ok) {
     const unlogged = await findMostRecentUnloggedPostForWorkspace(ctx.db, workspace.id);
     if (unlogged) {
-      const parsed = parseMoney(event.text);
-      if (parsed.ok) {
-        await updatePostSpend(ctx.db, unlogged.id, parsed.cents);
-        const enriched = await getPostWithPerson(ctx.db, unlogged.id);
-        const dollars = parsed.cents / 100;
-        const personName = enriched?.personName ?? 'them';
-        await replyDm(
-          `Logged $${dollars.toFixed(dollars % 1 === 0 ? 0 : 2)} for ${personName}. Thanks.`,
-        );
-        log.info('spend logged', {
-          workspaceId: workspace.id,
-          postId: unlogged.id,
-          cents: parsed.cents,
-        });
-        return ok({ kind: 'spend_logged', cents: parsed.cents });
-      }
-      await replyDm("I couldn't parse that — try a number like `45`.");
-      return ok({ kind: 'spend_parse_error' });
+      await updatePostSpend(ctx.db, unlogged.id, parsedMoney.cents);
+      const enriched = await getPostWithPerson(ctx.db, unlogged.id);
+      const dollars = parsedMoney.cents / 100;
+      const personName = enriched?.personName ?? 'them';
+      await replyDm(
+        `Logged $${dollars.toFixed(dollars % 1 === 0 ? 0 : 2)} for ${personName}. Thanks.`,
+      );
+      log.info('spend logged', {
+        workspaceId: workspace.id,
+        postId: unlogged.id,
+        cents: parsedMoney.cents,
+      });
+      return ok({ kind: 'spend_logged', cents: parsedMoney.cents });
     }
+  }
+
+  if (user?.isAdmin) {
+    return enqueueContinuation(ctx, teamId, event, event.thread_ts ?? null);
   }
 
   await replyDm(HELP_TEXT);
   return ok({ kind: 'help' });
+};
+
+const enqueueContinuation = async (
+  ctx: MessageHandlerCtx,
+  teamId: string,
+  event: MessageImEvent,
+  threadTs: string | null,
+): Promise<Result<MessageHandlerOutcome, string>> => {
+  if (!event.user) return ok({ kind: 'ignored', reason: 'no_user' });
+  const queued = await enqueueAgentCommand(ctx.db, ctx.emitter, {
+    slackTeamId: teamId,
+    slackUserId: event.user,
+    requestText: event.text,
+    idempotencyKey: `dm:${teamId}:${event.ts}`,
+    channelId: event.user,
+    threadTs,
+  });
+  if (!queued.ok) return queued;
+  if (queued.value.status === 'queued' || queued.value.status === 'duplicate') {
+    return ok({ kind: 'agent_queued', runId: queued.value.runId });
+  }
+  return ok({ kind: 'ignored', reason: queued.value.status });
 };

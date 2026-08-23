@@ -623,56 +623,58 @@ against known dd-cli v0.2.3 response changes before building higher-level behavi
 - Errors are deterministic, actionable, and do not expose credentials or raw sensitive payloads.
 - Agent never attributes schema or infrastructure errors to user input.
 
-### Phase 1: Persist deterministic order conversations
+### Phase 1: Persist deterministic conversations and drafts
 
 **Depends on:** Phase 0.
+**Status:** implemented as a general admin conversation layer. DoorDash drafts are one artifact
+kind alongside event plans and reminders.
 
-**Objective:** let an authorized admin provide order details naturally over multiple Slack
-messages without losing context, repeating answered questions, or silently ignoring supplied
-values.
+**Objective:** let an authorized admin continue a short Slack conversation without losing
+context. Food orders, party plans, and reminders share one session model instead of a
+DoorDash-only table.
 
 **Implementation scope:**
 
-1. Add a persisted DoorDash order-draft model and migration. At minimum, retain:
-   - verified workspace and requesting admin
-   - Slack channel, thread, and message correlation identifiers
-   - supplied and resolved delivery address
-   - requested date, time, and timezone
-   - restaurant query and selected store
-   - selected items, customizations, and quantities
-   - approved maximum spend
-   - draft status, expiration, and timestamps
-2. Define an explicit draft state machine, such as `collecting`, `ready_for_proposal`,
-   `pending_approval`, `approved`, `executing`, `completed`, `cancelled`, and `expired`.
-3. Route eligible admin DM and thread replies to the active draft before the birthday/spend
-   fallback handler.
-4. Scope continuation by verified workspace, admin, and Slack conversation. Never continue
-   another user's or workspace's draft.
-5. Ask only for missing or ambiguous fields and clearly summarize resolved fields before
-   proposing an action.
-6. Implement cancel, restart, replacement, and expiration behavior, including handling multiple
-   possible active drafts without guessing.
-7. Use `address find` for a user-supplied address. If it cannot be resolved, say so; never search
-   using the saved default while claiming the supplied address was used.
-8. Store stable DoorDash identifiers only after they are returned by discovery; do not allow the
-   model to invent store, item, or customization IDs.
+1. Persist `agent_sessions`, bounded `agent_session_turns`, and typed `agent_artifacts`.
+   Link `agent_runs.session_id` for audit. Scope every lookup by `workspace_id` +
+   `slack_user_id`. One open session per workspace admin.
+2. Artifact kinds: `doordash_order`, `sandbox_event_plan`, `reminder`. Statuses:
+   `collecting`, `ready`, `pending_approval`, `scheduled`, `completed`, `cancelled`,
+   `expired`. Slots are Zod-validated at write time.
+3. Route admin DMs and replies on the agent's own thread into the active session before
+   spend/help fallbacks. Exact spend amounts and birthday opt-in/out stay deterministic and
+   do not enter the agent.
+4. Feed recent turns plus filled/missing slots into `runAdminAgent`. Ask only for missing or
+   ambiguous fields. Honor `cancel`, `start over`, and `what do you have so far` without
+   calling the model.
+5. Competing artifacts require an explicit `start over` before replacement. Never guess.
+6. Approved reminders become `scheduled` artifacts with an explicit `fire_at` and fire once
+   via the `agent-reminder` Inngest job. Idle sessions expire after 24 hours; closed
+   sessions reuse 90-day audit retention.
+7. DoorDash follow-on still inside this phase: `address find` for a Slack-typed address.
+   Until that exists, discovery uses the connected DoorDash default address and must not
+   claim a typed address was searched.
+8. Store stable DoorDash identifiers only after they are returned by discovery; do not allow
+   the model to invent store, item, or customization IDs.
 
 **Validation:**
 
-- Exercise one-shot commands, multi-message DMs, and thread continuation.
-- Test ambiguous addresses, restaurants, items, times, and timezones.
-- Test cancellation, expiration, concurrent drafts, unauthorized replies, and workspace
-  isolation.
-- Verify collected values survive process restarts and Inngest retries.
+- Multi-message DMs keep date then time on the same draft.
+- Thread replies continue the matching session; unmatched threads stay ignored.
+- Spend `45` still logs spend and does not enter the agent.
+- Non-admin DMs never continue a session.
+- Cancel, expire, start-over, and competing-artifact confirmation are covered.
+- Reminders fire once and do not fire after cancel.
+- DoorDash slots survive a later `/confetti` in the same session.
 
 **Exit criteria:**
 
-- Address, time, restaurant, items, quantities, and maximum are retained across messages.
-- Admin DM and supported thread replies continue the correct active draft.
-- Confetti asks only for missing or ambiguous fields.
-- Supplied addresses are resolved honestly and deterministically.
-- Drafts survive restarts, expire safely, and can be cancelled or restarted.
-- Approval cards are generated from a persisted, immutable proposal snapshot.
+- Admin DMs and supported thread replies continue the correct private session.
+- Date, time, restaurant, items, and other supplied slots survive new messages and restarts.
+- Confetti asks only for missing or ambiguous fields and restates resolved slots.
+- Drafts expire safely and can be cancelled or restarted without guessing.
+- Reminders fire once from persisted `scheduled` artifacts.
+- Approval cards still come from a persisted, immutable proposal snapshot.
 
 ### Phase 2: Make cart execution idempotent and recoverable
 

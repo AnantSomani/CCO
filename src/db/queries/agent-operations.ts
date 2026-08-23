@@ -20,6 +20,7 @@ export type AgentRun = {
   model: string | null;
   toolCalls: unknown;
   errorCode: string | null;
+  sessionId: string | null;
   createdAt: Date;
   startedAt: Date | null;
   completedAt: Date | null;
@@ -62,6 +63,7 @@ export const createAgentRun = async (
     requestedBySlackUser: string;
     requestText: string;
     idempotencyKey: string;
+    sessionId?: string | null;
   },
 ): Promise<{ run: AgentRun; created: boolean }> => {
   const inserted = await db

@@ -57,6 +57,13 @@
       "when": 1786235075653,
       "tag": "0007_spicy_supreme_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787445264001,
+      "tag": "0008_lucky_stryfe",
+      "breakpoints": true
     }
   ]
 }

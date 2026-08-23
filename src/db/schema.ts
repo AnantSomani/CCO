@@ -205,6 +205,7 @@ export const agentRuns = pgTable(
     model: text('model'),
     toolCalls: jsonb('tool_calls'),
     errorCode: text('error_code'),
+    sessionId: uuid('session_id').references(() => agentSessions.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     startedAt: timestamp('started_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),
@@ -216,6 +217,7 @@ export const agentRuns = pgTable(
       t.requestedBySlackUser,
       t.createdAt,
     ),
+    index('agent_runs_session_idx').on(t.sessionId),
   ],
 );
 
@@ -253,5 +255,85 @@ export const agentActions = pgTable(
   (t) => [
     index('agent_actions_run_idx').on(t.runId),
     index('agent_actions_workspace_status_idx').on(t.workspaceId, t.status),
+  ],
+);
+
+// ─── agent_sessions ──────────────────────────────────────────────────────────
+// One open conversation per workspace admin. Slack DMs and slash commands
+// continue this row instead of starting a blank agent run.
+export const agentSessions = pgTable(
+  'agent_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    slackUserId: text('slack_user_id').notNull(),
+    channelId: text('channel_id'),
+    threadTs: text('thread_ts'),
+    status: text('status').notNull().default('active'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    lastUserMessageAt: timestamp('last_user_message_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('agent_sessions_one_open_idx')
+      .on(t.workspaceId, t.slackUserId)
+      .where(sql`${t.status} in ('active', 'waiting_for_user', 'pending_approval')`),
+    index('agent_sessions_workspace_user_idx').on(t.workspaceId, t.slackUserId),
+    index('agent_sessions_expires_idx').on(t.expiresAt, t.status),
+  ],
+);
+
+// ─── agent_session_turns ─────────────────────────────────────────────────────
+// Bounded recent conversation turns. Older turns are trimmed in application
+// code; this is not an unbounded transcript store.
+export const agentSessionTurns = pgTable(
+  'agent_session_turns',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: 'cascade' }),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    role: text('role').notNull(),
+    text: text('text').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('agent_session_turns_session_created_idx').on(t.sessionId, t.createdAt),
+    index('agent_session_turns_workspace_idx').on(t.workspaceId),
+  ],
+);
+
+// ─── agent_artifacts ─────────────────────────────────────────────────────────
+// Typed, versioned slots for in-progress work (DoorDash drafts, event plans,
+// reminders). The model may propose values; writes are Zod-validated.
+export const agentArtifacts = pgTable(
+  'agent_artifacts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: 'cascade' }),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    status: text('status').notNull().default('collecting'),
+    slots: jsonb('slots').notNull().default(sql`'{}'::jsonb`),
+    missingSlots: text('missing_slots').array().notNull().default(sql`'{}'::text[]`),
+    fireAt: timestamp('fire_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('agent_artifacts_session_status_idx').on(t.sessionId, t.status),
+    index('agent_artifacts_workspace_kind_idx').on(t.workspaceId, t.kind, t.status),
+    index('agent_artifacts_reminder_due_idx').on(t.fireAt, t.status),
   ],
 );

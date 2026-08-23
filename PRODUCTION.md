@@ -83,6 +83,8 @@ Verify these functions appear in Inngest Cloud:
 - `agent-command`
 - `execute-agent-action`
 - `agent-audit-retention`
+- `agent-reminder`
+- `agent-reminder-sweep`
 
 Production agent requests must appear as Inngest runs. If they do not, do not
 enable the production Slack command.

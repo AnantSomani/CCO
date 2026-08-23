@@ -5,6 +5,7 @@ import {
   failAgentRun,
   getAgentRunByIdempotencyKey,
 } from '@/db/queries/agent-operations';
+import { appendSessionTurn, getOrCreateOpenSession } from '@/db/queries/agent-sessions';
 import { isWorkspaceAdmin } from '@/db/queries/users';
 import { getWorkspaceBySlackTeamId } from '@/db/queries/workspaces';
 import { err, ok, type Result } from '@/lib/result';
@@ -32,6 +33,8 @@ export const enqueueAgentCommand = async (
     slackUserId: string;
     requestText: string;
     idempotencyKey: string;
+    channelId?: string | null;
+    threadTs?: string | null;
   },
 ): Promise<Result<EnqueueAgentCommandResult, string>> => {
   const requestText = input.requestText.trim();
@@ -56,23 +59,40 @@ export const enqueueAgentCommand = async (
   );
   if (recent >= MAX_RUNS_PER_MINUTE) return ok({ status: 'rate_limited' });
 
-  const created = await createAgentRun(db, {
-    workspaceId: workspace.id,
-    requestedBySlackUser: input.slackUserId,
-    requestText,
-    idempotencyKey: input.idempotencyKey,
-  });
-  if (!created.created) return ok({ status: 'duplicate', runId: created.run.id });
-
   try {
-    await emitter.send({
-      name: EVENT_NAME_AGENT_COMMAND_REQUESTED,
-      data: { runId: created.run.id },
+    const session = await getOrCreateOpenSession(db, {
+      workspaceId: workspace.id,
+      slackUserId: input.slackUserId,
+      channelId: input.channelId,
+      threadTs: input.threadTs,
     });
+    const created = await createAgentRun(db, {
+      workspaceId: workspace.id,
+      requestedBySlackUser: input.slackUserId,
+      requestText,
+      idempotencyKey: input.idempotencyKey,
+      sessionId: session.id,
+    });
+    if (!created.created) return ok({ status: 'duplicate', runId: created.run.id });
+    await appendSessionTurn(db, {
+      sessionId: session.id,
+      workspaceId: workspace.id,
+      role: 'user',
+      text: requestText,
+    });
+
+    try {
+      await emitter.send({
+        name: EVENT_NAME_AGENT_COMMAND_REQUESTED,
+        data: { runId: created.run.id },
+      });
+    } catch (error) {
+      await failAgentRun(db, created.run.id, 'enqueue_failed');
+      return err(error instanceof Error ? error.message : String(error));
+    }
+
+    return ok({ status: 'queued', runId: created.run.id });
   } catch (error) {
-    await failAgentRun(db, created.run.id, 'enqueue_failed');
     return err(error instanceof Error ? error.message : String(error));
   }
-
-  return ok({ status: 'queued', runId: created.run.id });
 };

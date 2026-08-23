@@ -350,4 +350,137 @@ describe('runAdminAgent', () => {
     expect(toolResults).toContain('Do not infer another cause');
     expect(toolResults).not.toContain('address formatting');
   });
+
+  it('grounds later answers using persisted conversation turns', async () => {
+    const db = await createTestDb();
+    await db.insert((await import('@/db/schema')).workspaces).values({
+      id: workspace.id,
+      slackTeamId: workspace.slackTeamId,
+      slackTeamName: workspace.slackTeamName,
+      botAccessTokenEnc: 'stub',
+      installedBySlackUser: 'U_ADMIN',
+      defaultBudgetCents: workspace.defaultBudgetCents,
+    });
+    const { getOrCreateOpenSession } = await import('@/db/queries/agent-sessions');
+    const session = await getOrCreateOpenSession(db, {
+      workspaceId: workspace.id,
+      slackUserId: 'U_ADMIN',
+    });
+    const anthropic = scriptedAnthropic([
+      {
+        kind: 'message',
+        message: messageWithToolUses([
+          {
+            id: 'tool-slots',
+            name: 'update_artifact_slots',
+            input: {
+              kind: 'doordash_order',
+              slots: { deliveryAt: '2026-08-22T19:00:00.000Z' },
+            },
+          },
+        ]),
+      },
+      {
+        kind: 'message',
+        message: messageWithToolUses([
+          {
+            id: 'tool-final',
+            name: 'finalize_response',
+            input: { reply_text: 'Got August 22 at 7pm. What restaurant?' },
+          },
+        ]),
+      },
+    ]);
+
+    const result = await runAdminAgent({
+      anthropic: anthropic.client,
+      db,
+      workspace,
+      rawText: '7pm',
+      userId: 'U_ADMIN',
+      log,
+      session: {
+        id: session.id,
+        turns: [{ role: 'user', text: 'Order pizza on August 22 at 2026-08-22T19:00:00.000Z' }],
+        artifact: null,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    const { getOpenArtifact } = await import('@/db/queries/agent-sessions');
+    const artifact = await getOpenArtifact(db, session.id, workspace.id);
+    expect(artifact?.slots.deliveryAt).toBe('2026-08-22T19:00:00.000Z');
+  });
+
+  it('refuses to replace a competing artifact without confirmation', async () => {
+    const db = await createTestDb();
+    await db.insert((await import('@/db/schema')).workspaces).values({
+      id: workspace.id,
+      slackTeamId: workspace.slackTeamId,
+      slackTeamName: workspace.slackTeamName,
+      botAccessTokenEnc: 'stub',
+      installedBySlackUser: 'U_ADMIN',
+      defaultBudgetCents: workspace.defaultBudgetCents,
+    });
+    const { getOpenArtifact, getOrCreateOpenSession, upsertOpenArtifact } = await import(
+      '@/db/queries/agent-sessions'
+    );
+    const session = await getOrCreateOpenSession(db, {
+      workspaceId: workspace.id,
+      slackUserId: 'U_ADMIN',
+    });
+    const existing = await upsertOpenArtifact(db, {
+      sessionId: session.id,
+      workspaceId: workspace.id,
+      kind: 'reminder',
+      slots: { title: 'Order cake', fireAt: '2026-08-23T18:00:00.000Z' },
+    });
+    const anthropic = scriptedAnthropic([
+      {
+        kind: 'message',
+        message: messageWithToolUses([
+          {
+            id: 'tool-slots',
+            name: 'update_artifact_slots',
+            input: {
+              kind: 'doordash_order',
+              slots: { restaurant: 'Local Pizza' },
+            },
+          },
+        ]),
+      },
+      {
+        kind: 'message',
+        message: messageWithToolUses([
+          {
+            id: 'tool-final',
+            name: 'finalize_response',
+            input: {
+              reply_text: 'There is already a reminder draft. Say start over to replace it.',
+            },
+          },
+        ]),
+      },
+    ]);
+
+    const result = await runAdminAgent({
+      anthropic: anthropic.client,
+      db,
+      workspace,
+      rawText: 'forget the reminder, order pizza instead',
+      userId: 'U_ADMIN',
+      log,
+      session: {
+        id: session.id,
+        turns: [{ role: 'user', text: 'Remind me to order cake at 2026-08-23T18:00:00.000Z' }],
+        artifact: existing,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(JSON.stringify(anthropic.calls[1]?.messages)).toMatch(/start over/);
+    const artifact = await getOpenArtifact(db, session.id, workspace.id);
+    expect(artifact?.kind).toBe('reminder');
+    expect(artifact?.slots.title).toBe('Order cake');
+  });
 });

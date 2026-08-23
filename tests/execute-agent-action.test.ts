@@ -5,6 +5,11 @@ import {
   getAgentAction,
   insertAgentActions,
 } from '@/db/queries/agent-operations';
+import {
+  getArtifactById,
+  getOrCreateOpenSession,
+  upsertOpenArtifact,
+} from '@/db/queries/agent-sessions';
 import { getWorkspaceById } from '@/db/queries/workspaces';
 import { workspaces } from '@/db/schema';
 import type { DdCliClient } from '@/integrations/doordash/dd-cli-client';
@@ -197,5 +202,45 @@ describe('runAgentAction', () => {
 
     expect(result).toEqual({ ok: false, error: 'doordash_existing_cart_requires_review' });
     expect(addItems).not.toHaveBeenCalled();
+  });
+
+  it('schedules an approved reminder exactly once', async () => {
+    const { db, run } = await seed();
+    const session = await getOrCreateOpenSession(db, {
+      workspaceId: WORKSPACE_ID,
+      slackUserId: 'U_ADMIN',
+    });
+    const artifact = await upsertOpenArtifact(db, {
+      sessionId: session.id,
+      workspaceId: WORKSPACE_ID,
+      kind: 'reminder',
+      slots: { title: 'Party', fireAt: '2026-08-22T19:00:00.000Z' },
+    });
+    const [action] = await insertAgentActions(db, run, [
+      {
+        kind: 'schedule_reminder',
+        summary: 'Remind me about the party',
+        payload: {
+          title: 'Party',
+          fireAt: '2026-08-22T19:00:00.000Z',
+          artifactId: artifact.id,
+        },
+        estimatedCostCents: null,
+      },
+    ]);
+    if (!action) throw new Error('missing action');
+    await approveAgentAction(db, action.id, WORKSPACE_ID, 'U_ADMIN');
+    const emitReminder = vi.fn(async () => undefined);
+
+    const result = await runAgentAction({
+      db,
+      getSlackClient: recordingSlackClientFactory({}),
+      emitReminder,
+      actionId: action.id,
+    });
+
+    expect(result).toEqual({ ok: true, value: { status: 'completed' } });
+    expect(emitReminder).toHaveBeenCalledTimes(1);
+    expect((await getArtifactById(db, artifact.id, WORKSPACE_ID))?.status).toBe('scheduled');
   });
 });
