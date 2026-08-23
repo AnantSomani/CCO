@@ -25,6 +25,32 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+DOORDASH_EXECUTOR="$(python3 - "$ENV_FILE" <<'PY'
+import pathlib
+import sys
+
+for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
+    if line.startswith("DOORDASH_EXECUTOR="):
+        print(line.split("=", 1)[1].strip())
+        break
+else:
+    print("disabled")
+PY
+)"
+
+if [[ "$DOORDASH_EXECUTOR" == "dd-cli" ]]; then
+  if ! command -v dd-cli >/dev/null 2>&1; then
+    echo "DOORDASH_EXECUTOR=dd-cli, but dd-cli was not found on PATH."
+    exit 1
+  fi
+  DD_INTENT=$'Summary: Verify DoorDash preview access for the local Confetti developer\nuser prompt/purpose: "Start the local Confetti development stack"'
+  if ! dd-cli --json-output address list --intent "$DD_INTENT" >/dev/null; then
+    echo "DoorDash authentication check failed. Run: dd-cli login"
+    exit 1
+  fi
+  echo "DoorDash preview executor is available and authenticated."
+fi
+
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/confetti-dev.XXXXXX")"
 CLOUDFLARED_LOG="$TMP_DIR/cloudflared.log"
 NEXT_LOG="$TMP_DIR/next.log"

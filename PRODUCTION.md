@@ -10,8 +10,18 @@ The local Cloudflare tunnel is for development only.
 - Read-only requests run without confirmation.
 - Every mutation is persisted as a pending action and requires a Slack button approval.
 - Approved actions execute through Inngest with idempotency and retries.
-- Food-order and event-planning actions are sandbox simulations only.
+- Event-planning actions and `sandbox_food_order` actions are simulations only.
 - Sandbox actions never contact vendors, reserve anything, or spend money.
+- The optional DoorDash integration can search, create a cart, and retrieve a quote only
+  after approval. It has no submit or checkout command and cannot charge a payment method.
+- Keep `DOORDASH_EXECUTOR=disabled` on Vercel. Vercel cannot access a separately installed
+  `dd-cli` binary or its OS-keychain credentials.
+
+For a future production preview worker, deploy the executor on a persistent VM or managed Mac,
+authenticate `dd-cli` interactively into that host's durable OS keychain, and let the worker
+atomically claim approved preview actions. Require worker authentication, credential-health
+monitoring, bounded retries, and a global kill switch. Real order submission must be a separate
+action with a second explicit approval; it is not implemented here.
 
 ## 1. Provision production services
 
@@ -39,6 +49,7 @@ Set every variable from `.env.example` for the Production environment:
 - `INNGEST_SIGNING_KEY`
 - `TOKEN_ENCRYPTION_KEY`
 - `APP_BASE_URL`
+- `DOORDASH_EXECUTOR=disabled`
 - `NODE_ENV=production`
 
 Never copy development Slack credentials or the local tunnel URL into production.

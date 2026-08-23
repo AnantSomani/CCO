@@ -1,0 +1,36 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Sanitized DoorDash order-preview response."
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "success": true,
+    "message": "Preview created; no order was submitted.",
+    "quote": {
+      "net_total_before_tip": {
+        "display_string": "$42.10",
+        "unit_amount": 4210
+      },
+      "line_items": [
+        {
+          "label": "Subtotal",
+          "final_money": {
+            "display_string": "$36.00",
+            "unit_amount": 3600
+          }
+        }
+      ],
+      "delivery_availability": {
+        "available": true
+      },
+      "dropoff_options": [],
+      "expense_order_options": {},
+      "store_order_cart": {}
+    }
+  },
+  "widget_type": "order_preview",
+  "assistant_instructions": "Sanitized fixture; terminal clients ignore UI instructions."
+}

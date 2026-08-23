@@ -134,6 +134,12 @@ describe('shouldRunCommandAgent', () => {
 describe('getAgentAcknowledgement', () => {
   it('returns contextual acknowledgements', () => {
     expect(getAgentAcknowledgement('plan a pizza order')).toContain('sandbox order');
+    expect(getAgentAcknowledgement('plan a pizza order', 'doordash')).toContain(
+      'live DoorDash options',
+    );
+    expect(getAgentAcknowledgement('plan a pizza order', 'doordash')).toContain(
+      'no order will be submitted',
+    );
     expect(getAgentAcknowledgement('plan a team offsite')).toContain('event plan');
     expect(getAgentAcknowledgement('what is our current budget?')).toContain('answer');
     expect(getAgentAcknowledgement('set our default budget to $75')).toContain('require approval');

@@ -144,6 +144,22 @@ Sandbox planning test:
 
 The final result must say that no vendor was contacted and no money was spent.
 
+DoorDash preview test (opt-in):
+
+1. Run `dd-cli login`.
+2. Set `DOORDASH_EXECUTOR=dd-cli` in `.env.local`.
+3. Restart `bash scripts/dev-stack.sh`; startup verifies the CLI and saved credentials.
+4. Send a request naming one exact restaurant, exact menu items and quantities, a delivery
+   time, and a maximum total such as `$90`.
+5. Confirm that Confetti searches the live menu, asks for clarification instead of guessing
+   ambiguous items or customizations, and sends a preview approval card.
+6. Approve once. The result may create a DoorDash cart and must show the live quote, while
+   explicitly stating that no order was submitted and no payment method was charged.
+7. Verify in DoorDash that there is an open cart and no new order in order history.
+
+DoorDash preview is disabled by default. The integration has no code path for `order submit`
+or `order checkout-url`.
+
 ## Common issues
 
 ### `/api/inngest` says the SDK response was not signed

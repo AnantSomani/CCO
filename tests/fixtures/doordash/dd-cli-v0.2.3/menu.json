@@ -1,0 +1,22 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Sanitized DoorDash menu response."
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "menu_id": "menu-test-1",
+    "items": [
+      {
+        "item_id": "item-test-1",
+        "name": "Test Margherita Pizza",
+        "description": "Tomato, mozzarella, and basil",
+        "price": 1800
+      }
+    ]
+  },
+  "widget_type": "menu",
+  "assistant_instructions": "Sanitized fixture; terminal clients ignore UI instructions."
+}

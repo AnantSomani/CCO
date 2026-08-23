@@ -28,6 +28,7 @@ const envSchema = z.object({
   }),
 
   APP_BASE_URL: z.string().url(),
+  DOORDASH_EXECUTOR: z.enum(['disabled', 'dd-cli']).default('disabled'),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 });
 

@@ -4,6 +4,7 @@ export const agentActionKindSchema = z.enum([
   'set_default_budget',
   'set_celebration_channel',
   'sandbox_food_order',
+  'doordash_order_preview',
   'sandbox_event_plan',
 ]);
 
@@ -38,6 +39,23 @@ export const sandboxFoodOrderPayloadSchema = z.object({
   estimatedCostCents: z.number().int().positive().max(1_000_000),
 });
 
+export const doorDashOrderItemSchema = z.object({
+  itemId: z.string().min(1).max(100),
+  itemName: z.string().min(1).max(200),
+  quantity: z.number().int().min(1).max(100),
+  nestedOptions: z.array(z.record(z.string(), z.unknown())).max(20).optional(),
+});
+
+export const doorDashOrderPreviewPayloadSchema = z.object({
+  storeId: z.string().min(1).max(100),
+  restaurant: z.string().min(1).max(120),
+  menuId: z.string().min(1).max(100),
+  items: z.array(doorDashOrderItemSchema).min(1).max(30),
+  deliveryAt: z.string().datetime({ offset: true }).optional(),
+  deliveryAddress: z.string().min(1).max(300),
+  estimatedCostCents: z.number().int().positive().max(1_000_000),
+});
+
 export const sandboxEventPlanPayloadSchema = z.object({
   title: z.string().min(1).max(120),
   eventAt: z.string().datetime({ offset: true }),
@@ -64,6 +82,12 @@ export const proposedAgentActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('sandbox_food_order'),
     summary: z.string().min(1).max(160),
     payload: sandboxFoodOrderPayloadSchema,
+    estimatedCostCents: z.number().int().positive(),
+  }),
+  z.object({
+    kind: z.literal('doordash_order_preview'),
+    summary: z.string().min(1).max(160),
+    payload: doorDashOrderPreviewPayloadSchema,
     estimatedCostCents: z.number().int().positive(),
   }),
   z.object({

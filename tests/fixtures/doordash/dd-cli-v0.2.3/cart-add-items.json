@@ -1,0 +1,26 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Sanitized DoorDash cart-add-items response."
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "success": true,
+    "cart_uuid": "00000000-0000-4000-8000-000000000101",
+    "cart": {
+      "store_name": "Test Kitchen",
+      "group_cart_url": null,
+      "items": [
+        {
+          "item_id": "item-test-1",
+          "quantity": 2
+        }
+      ]
+    },
+    "item_errors": []
+  },
+  "widget_type": "cart",
+  "assistant_instructions": "Sanitized fixture; terminal clients ignore UI instructions."
+}

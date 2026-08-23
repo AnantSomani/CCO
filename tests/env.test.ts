@@ -21,6 +21,7 @@ describe('parseEnv', () => {
     const env = parseEnv(validBase);
     expect(env.DATABASE_URL).toBe(validBase.DATABASE_URL);
     expect(env.NODE_ENV).toBe('test');
+    expect(env.DOORDASH_EXECUTOR).toBe('disabled');
   });
 
   it('defaults NODE_ENV to development when omitted', () => {
@@ -36,6 +37,15 @@ describe('parseEnv', () => {
 
   it('throws when DATABASE_URL is not a URL', () => {
     expect(() => parseEnv({ ...validBase, DATABASE_URL: 'not-a-url' })).toThrow(/DATABASE_URL/);
+  });
+
+  it('accepts only the disabled and dd-cli DoorDash executor modes', () => {
+    expect(parseEnv({ ...validBase, DOORDASH_EXECUTOR: 'dd-cli' }).DOORDASH_EXECUTOR).toBe(
+      'dd-cli',
+    );
+    expect(() => parseEnv({ ...validBase, DOORDASH_EXECUTOR: 'submit' })).toThrow(
+      /DOORDASH_EXECUTOR/,
+    );
   });
 
   it('throws when TOKEN_ENCRYPTION_KEY decodes to fewer than 32 bytes', () => {

@@ -14,6 +14,8 @@ import {
   setAgentRunResponseMessage,
 } from '@/db/queries/agent-operations';
 import { getWorkspaceById } from '@/db/queries/workspaces';
+import { createDdCliClient } from '@/integrations/doordash/dd-cli-client';
+import { env } from '@/lib/env';
 import { log as defaultLog } from '@/lib/log';
 import { err, ok, type Result } from '@/lib/result';
 import { buildAgentActionConfirmation } from '@/slack/blocks/agent-action';
@@ -55,6 +57,7 @@ export const runAgentCommand = async ({
   const result = await runAdminAgent({
     anthropic: getAnthropicClient(),
     db,
+    doorDash: env.DOORDASH_EXECUTOR === 'dd-cli' ? createDdCliClient() : undefined,
     workspace,
     rawText: run.requestText,
     userId: run.requestedBySlackUser,

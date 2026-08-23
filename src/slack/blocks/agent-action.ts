@@ -1,6 +1,7 @@
 import {
   type AgentActionKind,
   type AgentActionStatus,
+  doorDashOrderPreviewPayloadSchema,
   sandboxEventPlanPayloadSchema,
   sandboxFoodOrderPayloadSchema,
   setCelebrationChannelPayloadSchema,
@@ -28,6 +29,8 @@ const kindLabel = (kind: AgentActionKind): string => {
       return 'Workspace setting';
     case 'sandbox_food_order':
       return 'Sandbox food order';
+    case 'doordash_order_preview':
+      return 'DoorDash order preview';
     case 'sandbox_event_plan':
       return 'Sandbox event plan';
   }
@@ -43,6 +46,10 @@ export const buildAgentActionConfirmation = (
   const sandbox = action.kind.startsWith('sandbox_')
     ? '\n:warning: *Sandbox only:* no vendor will be contacted and no money will be spent.'
     : '';
+  const previewOnly =
+    action.kind === 'doordash_order_preview'
+      ? '\n:warning: *Preview only:* approval creates or changes a DoorDash cart and retrieves a live quote. It cannot submit an order or charge a payment method.'
+      : '';
   const safeSummary = escapeMrkdwn(action.summary);
   const text = `Approval required: ${action.summary}`;
   const details = formatActionDetails(action.kind, action.payload);
@@ -54,7 +61,7 @@ export const buildAgentActionConfirmation = (
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `*${kindLabel(action.kind)}*\n${safeSummary}\n${details}${cost}${sandbox}`,
+          text: `*${kindLabel(action.kind)}*\n${safeSummary}\n${details}${cost}${sandbox}${previewOnly}`,
         },
       },
       {
@@ -112,6 +119,16 @@ const formatActionDetails = (kind: AgentActionKind, payload: unknown): string =>
         `*Headcount:* ${parsed.data.headcount}`,
         `*Delivery:* ${escapeMrkdwn(parsed.data.deliveryAt)}`,
         `*Address:* ${escapeMrkdwn(parsed.data.deliveryAddress)}`,
+      ].join('\n');
+    }
+    case 'doordash_order_preview': {
+      const parsed = doorDashOrderPreviewPayloadSchema.safeParse(payload);
+      if (!parsed.success) return 'Invalid DoorDash preview payload';
+      return [
+        `*Restaurant:* ${escapeMrkdwn(parsed.data.restaurant)}`,
+        `*Items:* ${parsed.data.items.map((item) => `${item.quantity}× ${escapeMrkdwn(item.itemName)}`).join(', ')}`,
+        `*Delivery:* ${escapeMrkdwn(parsed.data.deliveryAt ?? 'ASAP')}`,
+        `*DoorDash default address:* ${escapeMrkdwn(parsed.data.deliveryAddress)}`,
       ].join('\n');
     }
     case 'sandbox_event_plan': {

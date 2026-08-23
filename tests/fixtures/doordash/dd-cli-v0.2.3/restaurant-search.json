@@ -1,0 +1,22 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Sanitized DoorDash restaurant-search response."
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "stores": [
+      {
+        "store_id": "store-test-1",
+        "name": "Test Kitchen",
+        "description": "Pizza and salads",
+        "distance": "0.8 mi",
+        "delivery_time": "25–35 min"
+      }
+    ]
+  },
+  "widget_type": "store_list",
+  "assistant_instructions": "Sanitized fixture; terminal clients ignore UI instructions."
+}

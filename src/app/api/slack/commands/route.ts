@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db/client';
 import { inngest } from '@/jobs/client';
+import { env } from '@/lib/env';
 import { log } from '@/lib/log';
 import { getSlackClient } from '@/slack/client';
 import { enqueueAgentCommand } from '@/slack/enqueue-agent-command';
@@ -72,7 +73,12 @@ export const POST = async (req: NextRequest): Promise<NextResponse> => {
     }
     switch (queued.value.status) {
       case 'queued':
-        return ephemeral(getAgentAcknowledgement(payload.text));
+        return ephemeral(
+          getAgentAcknowledgement(
+            payload.text,
+            env.DOORDASH_EXECUTOR === 'dd-cli' ? 'doordash' : 'sandbox',
+          ),
+        );
       case 'duplicate':
         return ephemeral("I'm already working on that request.");
       case 'unauthorized':

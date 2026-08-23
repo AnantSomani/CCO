@@ -3,8 +3,15 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { listOptedOut, listPeople } from '@/db/queries/people';
 import type { Workspace } from '@/db/queries/workspaces';
+import {
+  buildDoorDashIntent,
+  type DdCliClient,
+  type DoorDashMenu,
+  describeDdCliError,
+} from '@/integrations/doordash/dd-cli-client';
 import { err, ok, type Result } from '@/lib/result';
 import {
+  doorDashOrderPreviewPayloadSchema,
   type ProposedAgentAction,
   proposedAgentActionSchema,
   sandboxEventPlanPayloadSchema,
@@ -22,6 +29,9 @@ const TOOL_LIST_ROSTER_SUMMARY = 'list_roster_summary' as const;
 const TOOL_PROPOSE_SET_BUDGET = 'propose_set_default_budget' as const;
 const TOOL_PROPOSE_SET_CHANNEL = 'propose_set_celebration_channel' as const;
 const TOOL_PROPOSE_FOOD_ORDER = 'propose_sandbox_food_order' as const;
+const TOOL_DOORDASH_SEARCH = 'doordash_search_restaurants' as const;
+const TOOL_DOORDASH_MENU = 'doordash_get_menu' as const;
+const TOOL_PROPOSE_DOORDASH_PREVIEW = 'propose_doordash_order_preview' as const;
 const TOOL_PROPOSE_EVENT_PLAN = 'propose_sandbox_event_plan' as const;
 const TOOL_FINALIZE = 'finalize_response' as const;
 
@@ -30,14 +40,18 @@ const SYSTEM_PROMPT = `You are Confetti's admin copilot inside Slack. Help an au
 # Safety model
 - Read-only tools execute immediately.
 - Every mutation is only a proposal. A human must approve it in Slack before execution.
-- Food orders and event plans are SANDBOX simulations. They never contact vendors, reserve anything, or spend money.
+- Sandbox food orders and event plans never contact vendors, reserve anything, or spend money.
+- DoorDash tools may search live restaurants and menus. A DoorDash preview proposal still requires Slack approval; approval may create a cart and retrieve a quote, but it can never submit an order or charge a payment method.
 - Never claim an action completed. Say that it was prepared and requires approval.
 - Never invent a channel, dollar amount, address, date, headcount, or vendor. Ask for missing details.
+- When a tool returns a support code, repeat its stated explanation and code without inventing a cause or blaming user input.
 - The workspace budget is the maximum TOTAL cost for one event or action. It is never a per-person amount and must not be multiplied by headcount.
 - Never expose birthdays, start dates, email addresses, or other personal roster data.
 
 # How to work
 - Use context tools when they materially help.
+- For a DoorDash preview, search first, retrieve the selected restaurant's menu, and propose only exact returned IDs and item names. If the restaurant, menu item, quantity, required customization, delivery time, address, or maximum estimate is ambiguous, ask the user instead of guessing.
+- DoorDash discovery currently uses the connected DoorDash account's default address. Confetti has no workspace delivery-address setting and cannot retry with an address typed in Slack yet. Never claim otherwise.
 - Use a proposal tool only when the user explicitly asks for that action and provides every required field.
 - Respect the workspace budget for sandbox actions.
 - Keep the final response concise and call finalize_response exactly once.
@@ -68,6 +82,18 @@ const proposeFoodOrderInputSchema = sandboxFoodOrderPayloadSchema
     estimatedCostCents: value.estimatedCostCents,
     summary: value.summary,
   }));
+
+const doorDashSearchInputSchema = z.object({
+  query: z.string().min(1).max(120),
+});
+
+const doorDashMenuInputSchema = z.object({
+  store_id: z.string().min(1).max(100),
+});
+
+const proposeDoorDashPreviewInputSchema = doorDashOrderPreviewPayloadSchema.extend({
+  summary: z.string().min(1).max(160),
+});
 
 const proposeEventPlanInputSchema = sandboxEventPlanPayloadSchema
   .extend({ summary: z.string().min(1).max(160) })
@@ -161,6 +187,71 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: TOOL_DOORDASH_SEARCH,
+    description:
+      "Search live DoorDash restaurants near the account's default delivery address. Use before requesting a menu.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', minLength: 1, maxLength: 120 },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: TOOL_DOORDASH_MENU,
+    description:
+      'Retrieve the live menu for a restaurant returned by doordash_search_restaurants. Use exact returned item IDs and names.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        store_id: { type: 'string', minLength: 1, maxLength: 100 },
+      },
+      required: ['store_id'],
+    },
+  },
+  {
+    name: TOOL_PROPOSE_DOORDASH_PREVIEW,
+    description:
+      'Prepare a DoorDash cart-and-quote preview requiring Slack approval. This cannot submit or charge an order. Use only exact IDs and names returned by the discovery tools.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        storeId: { type: 'string', maxLength: 100 },
+        restaurant: { type: 'string', maxLength: 120 },
+        menuId: { type: 'string', maxLength: 100 },
+        items: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 30,
+          items: {
+            type: 'object',
+            properties: {
+              itemId: { type: 'string', maxLength: 100 },
+              itemName: { type: 'string', maxLength: 200 },
+              quantity: { type: 'integer', minimum: 1, maximum: 100 },
+              nestedOptions: { type: 'array', maxItems: 20, items: { type: 'object' } },
+            },
+            required: ['itemId', 'itemName', 'quantity'],
+          },
+        },
+        deliveryAt: { type: 'string', format: 'date-time' },
+        deliveryAddress: { type: 'string', maxLength: 300 },
+        estimatedCostCents: { type: 'integer', minimum: 1, maximum: 1_000_000 },
+        summary: { type: 'string', maxLength: 160 },
+      },
+      required: [
+        'storeId',
+        'restaurant',
+        'menuId',
+        'items',
+        'deliveryAddress',
+        'estimatedCostCents',
+        'summary',
+      ],
+    },
+  },
+  {
     name: TOOL_PROPOSE_EVENT_PLAN,
     description:
       'Prepare a sandbox-only event plan requiring approval. Never use without title, ISO event time, location, headcount, agenda, and estimate.',
@@ -208,6 +299,7 @@ export type AdminAgentToolCall = { name: string; input: unknown };
 export type RunAdminAgentArgs = {
   anthropic: Anthropic;
   db: Db;
+  doorDash?: DdCliClient;
   workspace: Workspace;
   rawText: string;
   userId: string;
@@ -224,6 +316,15 @@ export type AdminAgentResult = {
 
 export type RunAdminAgent = (args: RunAdminAgentArgs) => Promise<Result<AdminAgentResult, string>>;
 
+type DoorDashDiscoveryState = {
+  deliveryAddress: string | null;
+  stores: Map<string, { name: string }>;
+  menus: Map<string, DoorDashMenu>;
+};
+
+const doorDashToolError = (operation: string, error: string): string =>
+  `${operation} failed. ${describeDdCliError(error)}`;
+
 export const runAdminAgent: RunAdminAgent = async (args) => {
   const conversation: Anthropic.MessageParam[] = [
     {
@@ -239,6 +340,11 @@ export const runAdminAgent: RunAdminAgent = async (args) => {
   ];
   const proposedActions: ProposedAgentAction[] = [];
   const toolCalls: AdminAgentToolCall[] = [];
+  const doorDashDiscovery: DoorDashDiscoveryState = {
+    deliveryAddress: null,
+    stores: new Map(),
+    menus: new Map(),
+  };
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     let response: Anthropic.Message;
@@ -282,7 +388,7 @@ export const runAdminAgent: RunAdminAgent = async (args) => {
 
     for (const toolUse of toolUses) {
       toolCalls.push({ name: toolUse.name, input: toolUse.input });
-      const result = await runTool(args, toolUse, proposedActions);
+      const result = await runTool(args, toolUse, proposedActions, doorDashDiscovery);
       if (toolUse.name === TOOL_FINALIZE && result.ok) finalReply = result.value;
       toolResults.push({
         type: 'tool_result',
@@ -312,6 +418,7 @@ const runTool = async (
   args: RunAdminAgentArgs,
   toolUse: Anthropic.ToolUseBlock,
   proposedActions: ProposedAgentAction[],
+  doorDashDiscovery: DoorDashDiscoveryState,
 ): Promise<Result<string, string>> => {
   switch (toolUse.name) {
     case TOOL_GET_WORKSPACE_SETTINGS:
@@ -410,6 +517,135 @@ const runTool = async (
       });
     }
 
+    case TOOL_DOORDASH_SEARCH: {
+      if (!args.doorDash) return err('DoorDash preview is disabled for this environment');
+      const parsed = doorDashSearchInputSchema.safeParse(toolUse.input);
+      if (!parsed.success) return err('DoorDash search query is invalid');
+      const intent = buildDoorDashIntent(
+        'Help the workspace admin preview a team food order',
+        args.rawText,
+      );
+      const addresses = await args.doorDash.listAddresses(intent);
+      if (!addresses.ok) return err(doorDashToolError('DoorDash address lookup', addresses.error));
+      const defaultAddress = addresses.value.addresses.find((address) => address.is_default);
+      if (!defaultAddress) {
+        return err(
+          'The connected DoorDash account has no default delivery address. Configure one in DoorDash, then retry. Confetti cannot use an address typed in Slack yet. Support code: DD-ADDRESS.',
+        );
+      }
+      const deliveryAddress =
+        defaultAddress.printable_address ??
+        defaultAddress.formatted_address ??
+        defaultAddress.address ??
+        defaultAddress.label;
+      if (!deliveryAddress) {
+        return err(
+          'The connected DoorDash account default address has no usable display value. Review it in DoorDash, then retry. Confetti has no workspace delivery-address setting. Support code: DD-ADDRESS.',
+        );
+      }
+      const found = await args.doorDash.searchRestaurants({
+        query: parsed.data.query,
+        lat: defaultAddress.lat,
+        lng: defaultAddress.lng,
+        limit: 5,
+        intent,
+      });
+      if (!found.ok) {
+        return err(doorDashToolError('DoorDash restaurant search', found.error));
+      }
+      doorDashDiscovery.deliveryAddress = deliveryAddress;
+      for (const store of found.value.stores) {
+        doorDashDiscovery.stores.set(store.store_id, { name: store.name });
+      }
+      return ok(
+        JSON.stringify({
+          deliveryAddress,
+          stores: found.value.stores.map((store) => ({
+            storeId: store.store_id,
+            name: store.name,
+            description: store.description,
+            distance: store.distance,
+            deliveryTime: store.delivery_time,
+          })),
+        }),
+      );
+    }
+
+    case TOOL_DOORDASH_MENU: {
+      if (!args.doorDash) return err('DoorDash preview is disabled for this environment');
+      const parsed = doorDashMenuInputSchema.safeParse(toolUse.input);
+      if (!parsed.success) return err('DoorDash store ID is invalid');
+      if (!doorDashDiscovery.stores.has(parsed.data.store_id)) {
+        return err('restaurant must come from this request’s DoorDash search results');
+      }
+      const menu = await args.doorDash.getMenu({
+        storeId: parsed.data.store_id,
+        intent: buildDoorDashIntent(
+          'Help the workspace admin choose exact team lunch items',
+          args.rawText,
+        ),
+      });
+      if (!menu.ok) return err(doorDashToolError('DoorDash menu lookup', menu.error));
+      doorDashDiscovery.menus.set(parsed.data.store_id, menu.value);
+      return ok(
+        JSON.stringify({
+          storeId: parsed.data.store_id,
+          menuId: menu.value.menu_id,
+          items: menu.value.items.slice(0, 100),
+          truncated: menu.value.items.length > 100,
+        }),
+      );
+    }
+
+    case TOOL_PROPOSE_DOORDASH_PREVIEW: {
+      const parsed = proposeDoorDashPreviewInputSchema.safeParse(toolUse.input);
+      if (!parsed.success) return err('DoorDash preview proposal is missing required details');
+      if (!args.doorDash) return err('DoorDash preview is disabled for this environment');
+      if (parsed.data.estimatedCostCents > args.workspace.defaultBudgetCents) {
+        return err('DoorDash preview estimate exceeds the workspace budget');
+      }
+      if (!requestContainsDollarAmount(args.rawText, parsed.data.estimatedCostCents)) {
+        return err('the DoorDash maximum estimate must be explicitly present in the user request');
+      }
+      const store = doorDashDiscovery.stores.get(parsed.data.storeId);
+      const menu = doorDashDiscovery.menus.get(parsed.data.storeId);
+      if (!store || !menu || menu.menu_id !== parsed.data.menuId) {
+        return err('DoorDash restaurant and menu must come from this request’s discovery results');
+      }
+      if (store.name !== parsed.data.restaurant) {
+        return err('DoorDash restaurant name does not match the selected store');
+      }
+      if (
+        doorDashDiscovery.deliveryAddress === null ||
+        doorDashDiscovery.deliveryAddress !== parsed.data.deliveryAddress
+      ) {
+        return err('delivery address must match the DoorDash account default used for discovery');
+      }
+      for (const requestedItem of parsed.data.items) {
+        const discoveredItem = menu.items.find((item) => item.item_id === requestedItem.itemId);
+        if (!discoveredItem || discoveredItem.name !== requestedItem.itemName) {
+          return err('every DoorDash item must exactly match the discovered menu');
+        }
+        if (!nestedOptionIdsWereDiscovered(requestedItem.nestedOptions, discoveredItem)) {
+          return err('DoorDash item customizations must exactly match the discovered menu');
+        }
+      }
+      return addAction(proposedActions, {
+        kind: 'doordash_order_preview',
+        summary: parsed.data.summary,
+        payload: {
+          storeId: parsed.data.storeId,
+          restaurant: parsed.data.restaurant,
+          menuId: parsed.data.menuId,
+          items: parsed.data.items,
+          deliveryAt: parsed.data.deliveryAt,
+          deliveryAddress: parsed.data.deliveryAddress,
+          estimatedCostCents: parsed.data.estimatedCostCents,
+        },
+        estimatedCostCents: parsed.data.estimatedCostCents,
+      });
+    }
+
     case TOOL_PROPOSE_EVENT_PLAN: {
       const parsed = proposeEventPlanInputSchema.safeParse(toolUse.input);
       if (!parsed.success) return err('event-plan proposal is missing required details');
@@ -481,6 +717,30 @@ const requestContainsNumber = (request: string, expected: number): boolean =>
 
 const requestContainsPhrase = (request: string, expected: string): boolean =>
   request.toLocaleLowerCase().includes(expected.toLocaleLowerCase());
+
+const nestedOptionIdsWereDiscovered = (
+  nestedOptions: Array<Record<string, unknown>> | undefined,
+  discoveredItem: Record<string, unknown>,
+): boolean => {
+  if (!nestedOptions || nestedOptions.length === 0) return true;
+  const discoveredIds = collectIds(discoveredItem);
+  return Array.from(collectIds(nestedOptions)).every((id) => discoveredIds.has(id));
+};
+
+const collectIds = (value: unknown, ids = new Set<string>()): Set<string> => {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectIds(entry, ids);
+    return ids;
+  }
+  if (!value || typeof value !== 'object') return ids;
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'id' && (typeof entry === 'string' || typeof entry === 'number')) {
+      ids.add(String(entry));
+    }
+    collectIds(entry, ids);
+  }
+  return ids;
+};
 
 const callWithTimeout = async (
   anthropic: Anthropic,

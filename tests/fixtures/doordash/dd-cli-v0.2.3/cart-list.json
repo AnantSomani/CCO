@@ -1,0 +1,20 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Sanitized DoorDash cart-list response."
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "carts": [
+      {
+        "cart_uuid": "00000000-0000-4000-8000-000000000101",
+        "store_id": "store-test-1",
+        "store_name": "Test Kitchen"
+      }
+    ]
+  },
+  "widget_type": "cart_list",
+  "assistant_instructions": "Sanitized fixture; terminal clients ignore UI instructions."
+}

@@ -1,0 +1,28 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Sanitized DoorDash address-list response."
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "addresses": [
+      {
+        "address_id": "address-test-1",
+        "address_link_id": "address-link-test-1",
+        "label": null,
+        "printable_address": "100 Test Street, San Francisco, CA 94105",
+        "street_address": "100 Test Street",
+        "city": "San Francisco",
+        "state": "CA",
+        "zip_code": "94105",
+        "lat": 37.789,
+        "lng": -122.394,
+        "is_default": true
+      }
+    ]
+  },
+  "widget_type": "address_list",
+  "assistant_instructions": "Sanitized fixture; terminal clients ignore UI instructions."
+}

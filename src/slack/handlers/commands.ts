@@ -55,9 +55,15 @@ export const shouldRunCommandAgent = (text: string): boolean => {
   return !STATIC_SUBCOMMANDS.has(subcommand);
 };
 
-export const getAgentAcknowledgement = (text: string): string => {
+export const getAgentAcknowledgement = (
+  text: string,
+  foodMode: 'sandbox' | 'doordash' = 'sandbox',
+): string => {
   const request = text.trim().toLowerCase();
   if (/\b(food|lunch|meal|pizza|catering|restaurant|order)\b/.test(request)) {
+    if (foodMode === 'doordash') {
+      return "I'm checking live DoorDash options and the preview safety rules. I'll DM you the results or explain what needs adjusting; no order will be submitted.";
+    }
     return "I'm checking the sandbox order against your budget and safety rules. I'll DM you the proposal or explain what needs adjusting.";
   }
   if (/\b(event|venue|offsite|party|outing|retreat)\b/.test(request)) {
