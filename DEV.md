@@ -150,12 +150,17 @@ DoorDash preview test (opt-in):
 2. Set `DOORDASH_EXECUTOR=dd-cli` in `.env.local`.
 3. Restart `bash scripts/dev-stack.sh`; startup verifies the CLI and saved credentials.
 4. Send a request naming one exact restaurant, exact menu items and quantities, a delivery
-   time, and a maximum total such as `$90`.
-5. Confirm that Confetti searches the live menu, asks for clarification instead of guessing
-   ambiguous items or customizations, and sends a preview approval card.
-6. Approve once. The result may create a DoorDash cart and must show the live quote, while
-   explicitly stating that no order was submitted and no payment method was charged.
+   time, a street address, and a maximum total such as `$90`.
+5. Confirm that Confetti searches near the typed address (not only the DoorDash account
+   default), asks for clarification instead of guessing ambiguous items or customizations,
+   and sends a preview approval card.
+6. Approve once. The result may set the connected DoorDash account's delivery address,
+   create a cart, and must show the live quote, while explicitly stating that no order was
+   submitted and no payment method was charged.
 7. Verify in DoorDash that there is an open cart and no new order in order history.
+8. If a preview times out after a cart was created, use `/confetti recover` to list the cart,
+   retry the quote from the saved UUID, or mark it handled. Do not add items again and do
+   not edit production rows by hand.
 
 Follow-up admin DMs and replies in the agent’s own DM thread continue the same conversation.
 Say `what do you have so far`, `start over`, or `cancel` to inspect or clear the draft.

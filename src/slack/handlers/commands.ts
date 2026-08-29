@@ -1,4 +1,10 @@
 import type { Db } from '@/db/client';
+import { completeAgentAction, resumeAgentActionExecution } from '@/db/queries/agent-operations';
+import {
+  listRecoverableDoorDashExecutions,
+  markDoorDashExecutionRecovered,
+  reopenDoorDashExecution,
+} from '@/db/queries/doordash-executions';
 import { listOptedOut } from '@/db/queries/people';
 import { isWorkspaceAdmin } from '@/db/queries/users';
 import {
@@ -6,6 +12,9 @@ import {
   setCelebrationChannel,
   setDefaultBudget,
 } from '@/db/queries/workspaces';
+import { createDdCliClient } from '@/integrations/doordash/dd-cli-client';
+import { runAgentAction } from '@/jobs/execute-agent-action';
+import { env } from '@/lib/env';
 import { log as defaultLog } from '@/lib/log';
 import type { GetSlackClient } from '@/slack/client';
 import {
@@ -14,6 +23,7 @@ import {
   SUBCOMMAND_HELLO,
   SUBCOMMAND_HELP,
   SUBCOMMAND_OPT_OUTS,
+  SUBCOMMAND_RECOVER,
 } from '@/slack/ids';
 import type { SlashCommandPayload } from '@/slack/schemas';
 
@@ -39,6 +49,7 @@ const HELP_TEXT =
   '• `/confetti budget <usd>` — set the default per-event budget\n' +
   '• `/confetti opt-outs` — list opted-out teammates\n' +
   "• `/confetti hello` — check I'm alive\n" +
+  '• `/confetti recover` — list or resume a DoorDash preview cart\n' +
   '• Or ask in plain English, like `/confetti what is our budget?`';
 
 const STATIC_SUBCOMMANDS = new Set([
@@ -48,6 +59,7 @@ const STATIC_SUBCOMMANDS = new Set([
   SUBCOMMAND_CHANNEL,
   SUBCOMMAND_BUDGET,
   SUBCOMMAND_OPT_OUTS,
+  SUBCOMMAND_RECOVER,
 ]);
 
 export const shouldRunCommandAgent = (text: string): boolean => {
@@ -171,7 +183,75 @@ export const handleSlashCommand = async (
       return ephemeral(`Opted out (${rows.length}):\n${list}`);
     }
 
+    case SUBCOMMAND_RECOVER:
+      return recoverDoorDashPreview(ctx, workspace.id, rest);
+
     default:
       return ephemeral(`Unknown subcommand: \`${subcommand}\`.\n\n${HELP_TEXT}`);
   }
+};
+
+const ACTION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const recoverDoorDashPreview = async (
+  ctx: CommandHandlerCtx,
+  workspaceId: string,
+  rest: string,
+): Promise<CommandReply> => {
+  const tokens = rest.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) {
+    const rows = await listRecoverableDoorDashExecutions(ctx.db, workspaceId);
+    if (rows.length === 0) {
+      return ephemeral('There are no DoorDash preview carts waiting for recovery.');
+    }
+    const list = rows
+      .map((row) => {
+        const cart = row.cartUuid ? `cart \`${row.cartUuid}\`` : 'no cart yet';
+        return `• \`${row.actionId}\` — ${row.status}, ${cart}${row.errorCode ? ` (${row.errorCode})` : ''}`;
+      })
+      .join('\n');
+    return ephemeral(
+      `Recoverable DoorDash previews:\n${list}\n\nRetry a quote with \`/confetti recover <action-id>\`.\nMark one handled with \`/confetti recover done <action-id>\`.`,
+    );
+  }
+  if (tokens[0] === 'done' && tokens[1] && ACTION_ID_RE.test(tokens[1])) {
+    const marked = await markDoorDashExecutionRecovered(ctx.db, tokens[1], workspaceId);
+    if (!marked) return ephemeral('I could not find a recoverable preview for that action.');
+    await completeAgentAction(ctx.db, tokens[1], {
+      recovered: true,
+      previewOnly: true,
+      cartUuid: marked.cartUuid,
+    });
+    return ephemeral(
+      marked.cartUuid
+        ? `Marked preview \`${tokens[1]}\` recovered. Cart \`${marked.cartUuid}\` was not submitted.`
+        : `Marked preview \`${tokens[1]}\` recovered. No cart was created. Nothing was submitted.`,
+    );
+  }
+  const actionId = tokens[0];
+  if (!actionId || !ACTION_ID_RE.test(actionId)) {
+    return ephemeral('Usage: `/confetti recover` or `/confetti recover <action-id>`');
+  }
+  await reopenDoorDashExecution(ctx.db, actionId, workspaceId);
+  const resumed = await resumeAgentActionExecution(ctx.db, actionId, workspaceId);
+  if (!resumed) return ephemeral('That action is not waiting for DoorDash recovery.');
+  const result = await runAgentAction({
+    db: ctx.db,
+    getSlackClient: ctx.getSlackClient,
+    doorDash: env.DOORDASH_EXECUTOR === 'dd-cli' ? createDdCliClient() : undefined,
+    actionId,
+  });
+  if (!result.ok) {
+    return ephemeral(
+      'I could not finish the retry. No order was submitted. Check `/confetti recover` again in a moment.',
+    );
+  }
+  if (result.value.status === 'needs_review') {
+    return ephemeral(
+      'The live quote still needs review. No order was submitted. Use `/confetti recover` to inspect the cart.',
+    );
+  }
+  return ephemeral(
+    'Retried the saved cart and updated the approval message. No order was submitted.',
+  );
 };

@@ -1,0 +1,35 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Sanitized DoorDash cart-add-items required-options failure."
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "success": false,
+    "cart_uuid": "00000000-0000-4000-8000-000000000201",
+    "item_errors": [
+      {
+        "message": "Failed to add item [Test Gourmet Veggie]: required options missing",
+        "request": {
+          "item_id": "item-test-1",
+          "quantity": 1,
+          "item_name": "Test Gourmet Veggie"
+        },
+        "required_options": [
+          {
+            "name": "Size",
+            "extra_id": "e-size-test",
+            "min_num_options": 1,
+            "max_num_options": 1,
+            "options": [
+              { "id": "opt-size-small", "name": "SMALL", "price": 24.98 },
+              { "id": "opt-size-large", "name": "LARGE", "price": 41.64 }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

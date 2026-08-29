@@ -138,7 +138,6 @@ describe('agent sessions', () => {
     expect(summary).toContain('Friday, August 22, 2025 at 6:30 PM');
     expect(summary).toContain('1056 Foxhurst Way, San Jose, CA 95120');
     expect(summary).toContain('a restaurant');
-    expect(summary).toContain('a maximum total');
     expect(summary).not.toContain('deliveryAt');
     expect(summary).not.toContain('estimatedCostCents');
   });

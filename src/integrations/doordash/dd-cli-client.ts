@@ -48,6 +48,23 @@ const addressListSchema = z
   })
   .passthrough();
 
+const addressFindSchema = z
+  .object({
+    success: z.boolean().optional(),
+    candidates: z.array(
+      z
+        .object({
+          place_id: z.string().min(1),
+          description: z.string().min(1),
+        })
+        .passthrough(),
+    ),
+    count: z.number().optional(),
+  })
+  .passthrough();
+
+const addressWriteSchema = z.object({ success: z.boolean().optional() }).passthrough();
+
 const restaurantSearchSchema = z
   .object({
     stores: z.array(
@@ -111,6 +128,14 @@ const cartMutationSchema = z
   })
   .passthrough();
 
+const itemDetailsSchema = z
+  .object({
+    item_id: idSchema.optional(),
+    name: z.string().optional(),
+    extras: z.array(z.unknown()).optional(),
+  })
+  .passthrough();
+
 const orderPreviewSchema = z
   .object({
     success: z.boolean(),
@@ -139,11 +164,13 @@ const orderPreviewSchema = z
   .passthrough();
 
 export type DoorDashAddressList = z.infer<typeof addressListSchema>;
+export type DoorDashAddressFind = z.infer<typeof addressFindSchema>;
 export type DoorDashRestaurantSearch = z.infer<typeof restaurantSearchSchema>;
 export type DoorDashMenu = z.infer<typeof menuSchema>;
 export type DoorDashCartList = z.infer<typeof cartListSchema>;
 export type DoorDashCartMutation = z.infer<typeof cartMutationSchema>;
 export type DoorDashOrderPreview = z.infer<typeof orderPreviewSchema>;
+export type DoorDashItemDetails = z.infer<typeof itemDetailsSchema>;
 
 export type DoorDashCartItem = {
   itemId: string;
@@ -185,6 +212,16 @@ export type DdCliCommandRunner = (
 
 export type DdCliClient = {
   listAddresses: (intent: string) => Promise<Result<DoorDashAddressList, string>>;
+  findAddresses: (query: string, intent: string) => Promise<Result<DoorDashAddressFind, string>>;
+  addAddress: (input: {
+    placeId: string;
+    description?: string;
+    intent: string;
+  }) => Promise<Result<Record<string, unknown>, string>>;
+  setDefaultAddress: (input: {
+    addressId: string;
+    intent: string;
+  }) => Promise<Result<Record<string, unknown>, string>>;
   searchRestaurants: (input: {
     query: string;
     lat: number;
@@ -193,6 +230,12 @@ export type DdCliClient = {
     intent: string;
   }) => Promise<Result<DoorDashRestaurantSearch, string>>;
   getMenu: (input: { storeId: string; intent: string }) => Promise<Result<DoorDashMenu, string>>;
+  getItemDetails: (input: {
+    storeId: string;
+    menuId: string;
+    itemId: string;
+    intent: string;
+  }) => Promise<Result<DoorDashItemDetails, string>>;
   listCarts: (input: {
     storeId: string;
     intent: string;
@@ -201,6 +244,7 @@ export type DdCliClient = {
     storeId: string;
     menuId: string;
     items: DoorDashCartItem[];
+    cartUuid?: string;
     intent: string;
   }) => Promise<Result<DoorDashCartMutation, string>>;
   previewOrder: (input: {
@@ -271,6 +315,27 @@ export const createDdCliClient = (options?: {
 
   return {
     listAddresses: (intent) => invoke(['address', 'list', '--intent', intent], addressListSchema),
+    findAddresses: (query, intent) =>
+      invoke(['address', 'find', '--query', query, '--intent', intent], addressFindSchema),
+    addAddress: ({ placeId, description, intent }) =>
+      invoke(
+        [
+          'address',
+          'add',
+          '--place-id',
+          placeId,
+          ...(description ? ['--description', description] : []),
+          '--yes',
+          '--intent',
+          intent,
+        ],
+        addressWriteSchema,
+      ),
+    setDefaultAddress: ({ addressId, intent }) =>
+      invoke(
+        ['address', 'set', '--address-id', addressId, '--yes', '--intent', intent],
+        addressWriteSchema,
+      ),
     searchRestaurants: ({ query, lat, lng, limit = 5, intent }) =>
       invoke(
         [
@@ -290,9 +355,24 @@ export const createDdCliClient = (options?: {
       ),
     getMenu: ({ storeId, intent }) =>
       invoke(['menu', '--store-id', storeId, '--intent', intent], menuSchema),
+    getItemDetails: ({ storeId, menuId, itemId, intent }) =>
+      invoke(
+        [
+          'restaurant-item-details',
+          '--store-id',
+          storeId,
+          '--menu-id',
+          menuId,
+          '--item-id',
+          itemId.replace(/^i_/, ''),
+          '--intent',
+          intent,
+        ],
+        itemDetailsSchema,
+      ),
     listCarts: ({ storeId, intent }) =>
       invoke(['cart', 'list', '--store-id', storeId, '--intent', intent], cartListSchema),
-    addItems: ({ storeId, menuId, items, intent }) =>
+    addItems: ({ storeId, menuId, items, cartUuid, intent }) =>
       invoke(
         [
           'cart',
@@ -312,6 +392,7 @@ export const createDdCliClient = (options?: {
           ),
           '--fulfillment',
           'delivery',
+          ...(cartUuid ? ['--cart-uuid', cartUuid] : []),
           '--intent',
           intent,
         ],

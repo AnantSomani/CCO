@@ -7,10 +7,31 @@ import type { Workspace } from '@/db/queries/workspaces';
 import {
   buildDoorDashIntent,
   type DdCliClient,
+  type DoorDashItemDetails,
   type DoorDashMenu,
   describeDdCliError,
 } from '@/integrations/doordash/dd-cli-client';
+import {
+  applyDefaultSingleChoices,
+  arrangeSelectedOptions,
+  itemOptionIds,
+  missingRequiredOptionNames,
+  normalizeItemDetails,
+  selectedOptionIds,
+  summarizeItemDetails,
+} from '@/integrations/doordash/item-details';
+import { summarizeMenuItemPrice } from '@/integrations/doordash/prices';
+import {
+  type AddressCandidate,
+  addressLooksLike,
+  geocodeUsAddress,
+  matchSavedAddress,
+  pickAddressCandidate,
+  savedAddressId,
+  savedAddressLabel,
+} from '@/integrations/doordash/resolve-address';
 import { err, ok, type Result } from '@/lib/result';
+import { describeProposalError, honestAdminReply } from './admin-reply';
 import {
   doorDashOrderPreviewPayloadSchema,
   type ProposedAgentAction,
@@ -20,10 +41,10 @@ import {
   scheduleReminderPayloadSchema,
 } from './command-types';
 import { AGENT_MAX_TOKENS, AGENT_MODEL, AGENT_TIMEOUT_MS } from './model';
-import { agentArtifactKindSchema, parseArtifactSlots } from './session-types';
+import { type ArtifactSlots, agentArtifactKindSchema, parseArtifactSlots } from './session-types';
 
 const ADMIN_AGENT_TIMEOUT_MS = Math.max(AGENT_TIMEOUT_MS, 60_000);
-const MAX_ROUNDS = 5;
+const MAX_ROUNDS = 7;
 const MAX_ACTIONS = 3;
 const MAX_RESPONSE_CHARS = 700;
 
@@ -35,6 +56,7 @@ const TOOL_PROPOSE_SET_CHANNEL = 'propose_set_celebration_channel' as const;
 const TOOL_PROPOSE_FOOD_ORDER = 'propose_sandbox_food_order' as const;
 const TOOL_DOORDASH_SEARCH = 'doordash_search_restaurants' as const;
 const TOOL_DOORDASH_MENU = 'doordash_get_menu' as const;
+const TOOL_DOORDASH_ITEM_DETAILS = 'doordash_get_item_details' as const;
 const TOOL_PROPOSE_DOORDASH_PREVIEW = 'propose_doordash_order_preview' as const;
 const TOOL_PROPOSE_EVENT_PLAN = 'propose_sandbox_event_plan' as const;
 const TOOL_UPDATE_ARTIFACT = 'update_artifact_slots' as const;
@@ -56,8 +78,13 @@ const SYSTEM_PROMPT = `You are Confetti's admin copilot inside Slack. Help an au
 
 # How to work
 - Use context tools when they materially help.
-- For a DoorDash preview, search first, retrieve the selected restaurant's menu, and propose only exact returned IDs and item names. If the restaurant, menu item, quantity, required customization, delivery time, address, or maximum estimate is ambiguous, ask the user instead of guessing.
-- DoorDash discovery currently uses the connected DoorDash account's default address. Confetti has no workspace delivery-address setting and cannot retry with an address typed in Slack yet. Never claim otherwise.
+- For a DoorDash preview, search first, retrieve the selected restaurant's menu, then call doordash_get_item_details for each chosen item. If this turn already reloaded DoorDash discovery from the draft, use those exact IDs and propose without searching again. Required extras may use title instead of name and nest under the chosen size (crust, sauce, toppings). A flat list of chosen option names is enough; Confetti will nest them. If a required group has exactly one choice, include that id. If required options are missing, ask the user to pick them. Propose only exact returned IDs and item names. Never invent option IDs.
+- Compare only priceCents to defaultPerEventBudgetCents. Example: 2498 cents is $24.98 and is under a 5000-cent ($50) budget. Never say a cheaper item exceeds the budget.
+- If restaurant, item, address, and time are known, call propose_doordash_order_preview in this turn. Use the workspace budget as estimatedCostCents unless the user named a lower max. Do not ask for a maximum.
+- Never say you queued, submitted, or prepared an approval card unless propose_doordash_order_preview returned accepted in this turn. The Slack card is the only approval. Approval creates a cart preview; it never places an order.
+- If propose_doordash_order_preview failed, say which options are still missing. Never blame DoorDash, invent a validation outage, tell the user to order on DoorDash, or mention Confetti support.
+- Do not repeat the full order summary. Ask at most one question, or propose.
+- If the user typed a delivery address, resolve it with DoorDash address find or a matching saved address. Search near those coordinates. Never tell the user to change a DoorDash default address themselves. Never claim a typed address was searched until resolution succeeded.
 - When the user supplies draft fields (address, date, time, headcount, restaurant), call update_artifact_slots and ask only for missing slots. Do not call DoorDash search or menu tools until the user has named a restaurant or search query.
 - Use a proposal tool only when the user explicitly asks for that action and every required field is present in this conversation or the persisted draft.
 - Ask only for missing or ambiguous slots. Restate resolved slots before proposing.
@@ -96,10 +123,17 @@ const proposeFoodOrderInputSchema = sandboxFoodOrderPayloadSchema
 
 const doorDashSearchInputSchema = z.object({
   query: z.string().min(1).max(120),
+  address: z.string().min(1).max(300).optional(),
 });
 
 const doorDashMenuInputSchema = z.object({
   store_id: z.string().min(1).max(100),
+});
+
+const doorDashItemDetailsInputSchema = z.object({
+  store_id: z.string().min(1).max(100),
+  menu_id: z.string().min(1).max(100),
+  item_id: z.string().min(1).max(100),
 });
 
 const proposeDoorDashPreviewInputSchema = doorDashOrderPreviewPayloadSchema.extend({
@@ -210,11 +244,12 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: TOOL_DOORDASH_SEARCH,
     description:
-      "Search live DoorDash restaurants near the account's default delivery address. Use before requesting a menu.",
+      'Search live DoorDash restaurants. If the user supplied a delivery address, pass it as address so Confetti can resolve it with address find. Use before requesting a menu.',
     input_schema: {
       type: 'object',
       properties: {
         query: { type: 'string', minLength: 1, maxLength: 120 },
+        address: { type: 'string', minLength: 1, maxLength: 300 },
       },
       required: ['query'],
     },
@@ -229,6 +264,20 @@ const TOOLS: Anthropic.Tool[] = [
         store_id: { type: 'string', minLength: 1, maxLength: 100 },
       },
       required: ['store_id'],
+    },
+  },
+  {
+    name: TOOL_DOORDASH_ITEM_DETAILS,
+    description:
+      'Retrieve required customizations for a menu item. Call this after the user picks an item and before proposing a DoorDash preview.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        store_id: { type: 'string', minLength: 1, maxLength: 100 },
+        menu_id: { type: 'string', minLength: 1, maxLength: 100 },
+        item_id: { type: 'string', minLength: 1, maxLength: 100 },
+      },
+      required: ['store_id', 'menu_id', 'item_id'],
     },
   },
   {
@@ -365,6 +414,7 @@ export type RunAdminAgentArgs = {
   userId: string;
   log: Logger;
   session?: AdminAgentSessionContext;
+  geocodeAddress?: typeof geocodeUsAddress;
 };
 
 export type AdminAgentResult = {
@@ -379,8 +429,11 @@ export type RunAdminAgent = (args: RunAdminAgentArgs) => Promise<Result<AdminAge
 
 type DoorDashDiscoveryState = {
   deliveryAddress: string | null;
+  placeId: string | null;
+  addressId: string | null;
   stores: Map<string, { name: string }>;
   menus: Map<string, DoorDashMenu>;
+  itemDetails: Map<string, DoorDashItemDetails>;
 };
 
 const doorDashToolError = (operation: string, error: string): string =>
@@ -394,6 +447,7 @@ export const runAdminAgent: RunAdminAgent = async (args) => {
         `Workspace: ${args.workspace.slackTeamName}`,
         `Workspace timezone: ${args.workspace.timezone}`,
         `Workspace total per-event budget cents: ${args.workspace.defaultBudgetCents}`,
+        `Use ${args.workspace.defaultBudgetCents} as DoorDash estimatedCostCents unless the user named a lower maximum. Do not ask for a maximum.`,
         `Requesting Slack user: ${args.userId}`,
         args.session
           ? `Active draft: ${args.session.artifact ? `${args.session.artifact.kind} status=${args.session.artifact.status} slots=${JSON.stringify(args.session.artifact.slots)} missing=${args.session.artifact.missingSlots.join(',')}` : 'none'}`
@@ -409,12 +463,26 @@ export const runAdminAgent: RunAdminAgent = async (args) => {
   const toolCalls: AdminAgentToolCall[] = [];
   const doorDashDiscovery: DoorDashDiscoveryState = {
     deliveryAddress: null,
+    placeId: null,
+    addressId: null,
     stores: new Map(),
     menus: new Map(),
+    itemDetails: new Map(),
   };
   const sessionState: { artifact: AgentArtifact | null } = {
     artifact: args.session?.artifact ?? null,
   };
+  let lastProposalError: string | null = null;
+  if (args.doorDash) {
+    await hydrateDoorDashDiscovery(args, doorDashDiscovery, sessionState);
+  }
+  const reloadedDiscovery = summarizeReloadedDoorDashDiscovery(
+    doorDashDiscovery,
+    sessionState.artifact,
+  );
+  if (reloadedDiscovery && conversation[0] && typeof conversation[0].content === 'string') {
+    conversation[0].content += `\n${reloadedDiscovery}`;
+  }
   const groundingText = [
     ...(args.session?.turns.map((turn) => turn.text) ?? []),
     args.rawText,
@@ -471,6 +539,7 @@ export const runAdminAgent: RunAdminAgent = async (args) => {
         groundingText,
       );
       if (toolUse.name === TOOL_FINALIZE && result.ok) finalReply = result.value;
+      if (!result.ok && toolUse.name.startsWith('propose_')) lastProposalError = result.error;
       toolResults.push({
         type: 'tool_result',
         tool_use_id: toolUse.id,
@@ -481,7 +550,7 @@ export const runAdminAgent: RunAdminAgent = async (args) => {
 
     if (finalReply) {
       return ok({
-        replyText: finalReply,
+        replyText: honestAdminReply(finalReply, proposedActions.length, lastProposalError),
         proposedActions,
         toolCalls,
         model: AGENT_MODEL,
@@ -492,7 +561,15 @@ export const runAdminAgent: RunAdminAgent = async (args) => {
     conversation.push({ role: 'user', content: toolResults });
   }
 
-  return err('admin agent exceeded max rounds without finalizing');
+  return ok({
+    replyText: lastProposalError
+      ? `I could not prepare an approval card yet. ${describeProposalError(lastProposalError)}`
+      : 'I could not finish that turn. Your draft is still here. Say `what do you have so far` or send the next detail.',
+    proposedActions,
+    toolCalls,
+    model: AGENT_MODEL,
+    rounds: MAX_ROUNDS,
+  });
 };
 
 const runTool = async (
@@ -608,41 +685,53 @@ const runTool = async (
         'Help the workspace admin preview a team food order',
         args.rawText,
       );
-      const addresses = await args.doorDash.listAddresses(intent);
-      if (!addresses.ok) return err(doorDashToolError('DoorDash address lookup', addresses.error));
-      const defaultAddress = addresses.value.addresses.find((address) => address.is_default);
-      if (!defaultAddress) {
-        return err(
-          'The connected DoorDash account has no default delivery address. Configure one in DoorDash, then retry. Confetti cannot use an address typed in Slack yet. Support code: DD-ADDRESS.',
+      const requestedAddress =
+        parsed.data.address ??
+        (typeof sessionState.artifact?.slots.deliveryAddress === 'string'
+          ? sessionState.artifact.slots.deliveryAddress
+          : null);
+      const resolved = await resolveSearchLocation(
+        args.doorDash,
+        requestedAddress,
+        intent,
+        args.geocodeAddress ?? geocodeUsAddress,
+      );
+      if (!resolved.ok) return resolved;
+      if (resolved.value.kind === 'ambiguous') {
+        return ok(
+          JSON.stringify({
+            needsAddressChoice: true,
+            message:
+              'I found more than one matching address. Ask the user which one to use. I have not searched restaurants yet.',
+            candidates: resolved.value.candidates,
+          }),
         );
       }
-      const deliveryAddress =
-        defaultAddress.printable_address ??
-        defaultAddress.formatted_address ??
-        defaultAddress.address ??
-        defaultAddress.label;
-      if (!deliveryAddress) {
-        return err(
-          'The connected DoorDash account default address has no usable display value. Review it in DoorDash, then retry. Confetti has no workspace delivery-address setting. Support code: DD-ADDRESS.',
-        );
-      }
+      const location = resolved.value.location;
       const found = await args.doorDash.searchRestaurants({
         query: parsed.data.query,
-        lat: defaultAddress.lat,
-        lng: defaultAddress.lng,
+        lat: location.lat,
+        lng: location.lng,
         limit: 5,
         intent,
       });
       if (!found.ok) {
         return err(doorDashToolError('DoorDash restaurant search', found.error));
       }
-      doorDashDiscovery.deliveryAddress = deliveryAddress;
+      doorDashDiscovery.deliveryAddress = location.printableAddress;
+      doorDashDiscovery.placeId = location.placeId ?? null;
+      doorDashDiscovery.addressId = location.addressId ?? null;
       for (const store of found.value.stores) {
         doorDashDiscovery.stores.set(store.store_id, { name: store.name });
       }
+      await persistDoorDashDraft(args, sessionState, {
+        deliveryAddress: location.printableAddress,
+      });
       return ok(
         JSON.stringify({
-          deliveryAddress,
+          deliveryAddress: location.printableAddress,
+          addressSource: location.source,
+          searchedTypedAddress: requestedAddress !== null,
           stores: found.value.stores.map((store) => ({
             storeId: store.store_id,
             name: store.name,
@@ -670,14 +759,52 @@ const runTool = async (
       });
       if (!menu.ok) return err(doorDashToolError('DoorDash menu lookup', menu.error));
       doorDashDiscovery.menus.set(parsed.data.store_id, menu.value);
+      const store = doorDashDiscovery.stores.get(parsed.data.store_id);
+      await persistDoorDashDraft(args, sessionState, {
+        storeId: parsed.data.store_id,
+        menuId: menu.value.menu_id,
+        ...(store ? { restaurant: store.name } : {}),
+      });
       return ok(
         JSON.stringify({
           storeId: parsed.data.store_id,
           menuId: menu.value.menu_id,
-          items: menu.value.items.slice(0, 100),
+          budgetCents: args.workspace.defaultBudgetCents,
+          items: menu.value.items.slice(0, 100).map((item) => ({
+            ...item,
+            ...summarizeMenuItemPrice(item.price, item.price_display_string),
+          })),
           truncated: menu.value.items.length > 100,
         }),
       );
+    }
+
+    case TOOL_DOORDASH_ITEM_DETAILS: {
+      if (!args.doorDash) return err('DoorDash preview is disabled for this environment');
+      const parsed = doorDashItemDetailsInputSchema.safeParse(toolUse.input);
+      if (!parsed.success) return err('DoorDash item details request is invalid');
+      if (!doorDashDiscovery.stores.has(parsed.data.store_id)) {
+        return err('restaurant must come from this request’s DoorDash search results');
+      }
+      const menu = doorDashDiscovery.menus.get(parsed.data.store_id);
+      if (!menu || menu.menu_id !== parsed.data.menu_id) {
+        return err('menu must come from this request’s DoorDash menu lookup');
+      }
+      if (!menu.items.some((item) => item.item_id === parsed.data.item_id)) {
+        return err('item must come from this request’s DoorDash menu lookup');
+      }
+      const details = await args.doorDash.getItemDetails({
+        storeId: parsed.data.store_id,
+        menuId: parsed.data.menu_id,
+        itemId: parsed.data.item_id,
+        intent: buildDoorDashIntent(
+          'Help the workspace admin choose required DoorDash item options',
+          args.rawText,
+        ),
+      });
+      if (!details.ok) return err(doorDashToolError('DoorDash item details', details.error));
+      doorDashDiscovery.itemDetails.set(parsed.data.item_id, details.value);
+      return ok(JSON.stringify(summarizeItemDetails(normalizeItemDetails(details.value))));
     }
 
     case TOOL_PROPOSE_DOORDASH_PREVIEW: {
@@ -687,8 +814,19 @@ const runTool = async (
       if (parsed.data.estimatedCostCents > args.workspace.defaultBudgetCents) {
         return err('DoorDash preview estimate exceeds the workspace budget');
       }
-      if (!requestContainsDollarAmount(groundingText, parsed.data.estimatedCostCents)) {
+      const usesWorkspaceBudget =
+        parsed.data.estimatedCostCents === args.workspace.defaultBudgetCents;
+      if (
+        !usesWorkspaceBudget &&
+        !requestContainsDollarAmount(groundingText, parsed.data.estimatedCostCents)
+      ) {
         return err('the DoorDash maximum estimate must be explicitly present in the user request');
+      }
+      if (
+        !doorDashDiscovery.stores.has(parsed.data.storeId) ||
+        !doorDashDiscovery.menus.has(parsed.data.storeId)
+      ) {
+        await hydrateDoorDashDiscovery(args, doorDashDiscovery, sessionState);
       }
       const store = doorDashDiscovery.stores.get(parsed.data.storeId);
       const menu = doorDashDiscovery.menus.get(parsed.data.storeId);
@@ -698,21 +836,60 @@ const runTool = async (
       if (store.name !== parsed.data.restaurant) {
         return err('DoorDash restaurant name does not match the selected store');
       }
+      const resolvedAddress = doorDashDiscovery.deliveryAddress;
       if (
-        doorDashDiscovery.deliveryAddress === null ||
-        doorDashDiscovery.deliveryAddress !== parsed.data.deliveryAddress
+        resolvedAddress === null ||
+        (parsed.data.deliveryAddress !== resolvedAddress &&
+          !addressLooksLike(resolvedAddress, parsed.data.deliveryAddress))
       ) {
-        return err('delivery address must match the DoorDash account default used for discovery');
+        return err('delivery address must match the address Confetti resolved for this search');
       }
       for (const requestedItem of parsed.data.items) {
         const discoveredItem = menu.items.find((item) => item.item_id === requestedItem.itemId);
         if (!discoveredItem || discoveredItem.name !== requestedItem.itemName) {
           return err('every DoorDash item must exactly match the discovered menu');
         }
-        if (!nestedOptionIdsWereDiscovered(requestedItem.nestedOptions, discoveredItem)) {
-          return err('DoorDash item customizations must exactly match the discovered menu');
+        const details = await loadItemDetails(
+          args.doorDash,
+          doorDashDiscovery,
+          parsed.data.storeId,
+          parsed.data.menuId,
+          requestedItem.itemId,
+          args.rawText,
+        );
+        if (!details.ok) return details;
+        const nestedOptions = applyDefaultSingleChoices(
+          details.value,
+          arrangeSelectedOptions(details.value, requestedItem.nestedOptions),
+        );
+        if (nestedOptions) requestedItem.nestedOptions = nestedOptions;
+        const missing = missingRequiredOptionNames(details.value, nestedOptions);
+        if (missing.length > 0) {
+          await persistDoorDashDraft(args, sessionState, {
+            storeId: parsed.data.storeId,
+            restaurant: parsed.data.restaurant,
+            menuId: parsed.data.menuId,
+            items: parsed.data.items,
+            deliveryAddress: resolvedAddress,
+            ...(parsed.data.deliveryAt ? { deliveryAt: parsed.data.deliveryAt } : {}),
+          });
+          return err(
+            `Ask the user to pick required options for ${requestedItem.itemName}: ${missing.join(', ')}. Do not guess.`,
+          );
+        }
+        if (!nestedOptionIdsWereDiscovered(nestedOptions, details.value.ids)) {
+          return err('DoorDash item customizations must exactly match the discovered item details');
         }
       }
+      await persistDoorDashDraft(args, sessionState, {
+        storeId: parsed.data.storeId,
+        restaurant: parsed.data.restaurant,
+        menuId: parsed.data.menuId,
+        items: parsed.data.items,
+        deliveryAddress: resolvedAddress,
+        estimatedCostCents: parsed.data.estimatedCostCents,
+        ...(parsed.data.deliveryAt ? { deliveryAt: parsed.data.deliveryAt } : {}),
+      });
       return addAction(proposedActions, {
         kind: 'doordash_order_preview',
         summary: parsed.data.summary,
@@ -722,7 +899,9 @@ const runTool = async (
           menuId: parsed.data.menuId,
           items: parsed.data.items,
           deliveryAt: parsed.data.deliveryAt,
-          deliveryAddress: parsed.data.deliveryAddress,
+          deliveryAddress: resolvedAddress,
+          placeId: doorDashDiscovery.placeId ?? undefined,
+          addressId: doorDashDiscovery.addressId ?? undefined,
           estimatedCostCents: parsed.data.estimatedCostCents,
         },
         estimatedCostCents: parsed.data.estimatedCostCents,
@@ -826,7 +1005,13 @@ const runTool = async (
 
     case TOOL_FINALIZE: {
       const parsed = finalizeResponseInputSchema.safeParse(toolUse.input);
-      return parsed.success ? ok(parsed.data.reply_text) : err('invalid final response');
+      if (parsed.success) return ok(parsed.data.reply_text);
+      const raw =
+        toolUse.input && typeof toolUse.input === 'object' && 'reply_text' in toolUse.input
+          ? String((toolUse.input as { reply_text?: unknown }).reply_text ?? '')
+          : '';
+      const trimmed = raw.trim().slice(0, MAX_RESPONSE_CHARS);
+      return trimmed ? ok(trimmed) : err('invalid final response');
     }
 
     default:
@@ -865,28 +1050,280 @@ const requestContainsNumber = (request: string, expected: number): boolean =>
 const requestContainsPhrase = (request: string, expected: string): boolean =>
   request.toLocaleLowerCase().includes(expected.toLocaleLowerCase());
 
-const nestedOptionIdsWereDiscovered = (
-  nestedOptions: Array<Record<string, unknown>> | undefined,
-  discoveredItem: Record<string, unknown>,
-): boolean => {
-  if (!nestedOptions || nestedOptions.length === 0) return true;
-  const discoveredIds = collectIds(discoveredItem);
-  return Array.from(collectIds(nestedOptions)).every((id) => discoveredIds.has(id));
+const persistDoorDashDraft = async (
+  args: RunAdminAgentArgs,
+  sessionState: { artifact: AgentArtifact | null },
+  slots: ArtifactSlots,
+): Promise<void> => {
+  if (!args.session) return;
+  if (sessionState.artifact && sessionState.artifact.kind !== 'doordash_order') return;
+  const artifact = await upsertOpenArtifact(args.db, {
+    sessionId: args.session.id,
+    workspaceId: args.workspace.id,
+    kind: 'doordash_order',
+    slots: { ...(sessionState.artifact?.slots ?? {}), ...slots },
+  });
+  sessionState.artifact = artifact;
 };
 
-const collectIds = (value: unknown, ids = new Set<string>()): Set<string> => {
-  if (Array.isArray(value)) {
-    for (const entry of value) collectIds(entry, ids);
-    return ids;
-  }
-  if (!value || typeof value !== 'object') return ids;
-  for (const [key, entry] of Object.entries(value)) {
-    if (key === 'id' && (typeof entry === 'string' || typeof entry === 'number')) {
-      ids.add(String(entry));
+const hydrateDoorDashDiscovery = async (
+  args: RunAdminAgentArgs,
+  discovery: DoorDashDiscoveryState,
+  sessionState: { artifact: AgentArtifact | null },
+): Promise<void> => {
+  const artifact = sessionState.artifact;
+  if (!args.doorDash || !artifact || artifact.kind !== 'doordash_order') return;
+  const restaurant = artifact.slots.restaurant;
+  const intent = buildDoorDashIntent(
+    'Help the workspace admin continue a saved DoorDash draft',
+    args.rawText,
+  );
+  let searchLat: number | null = null;
+  let searchLng: number | null = null;
+  if (typeof artifact.slots.deliveryAddress === 'string') {
+    const resolved = await resolveSearchLocation(
+      args.doorDash,
+      artifact.slots.deliveryAddress,
+      intent,
+      args.geocodeAddress ?? geocodeUsAddress,
+    );
+    if (resolved.ok && resolved.value.kind === 'resolved') {
+      discovery.deliveryAddress = resolved.value.location.printableAddress;
+      discovery.placeId = resolved.value.location.placeId ?? null;
+      discovery.addressId = resolved.value.location.addressId ?? null;
+      searchLat = resolved.value.location.lat;
+      searchLng = resolved.value.location.lng;
+    } else {
+      discovery.deliveryAddress = artifact.slots.deliveryAddress;
     }
-    collectIds(entry, ids);
   }
-  return ids;
+  let storeId = artifact.slots.storeId;
+  if (!storeId && restaurant && searchLat !== null && searchLng !== null) {
+    const found = await args.doorDash.searchRestaurants({
+      query: restaurant,
+      lat: searchLat,
+      lng: searchLng,
+      limit: 5,
+      intent,
+    });
+    if (found.ok) {
+      storeId = pickHydratedStoreId(found.value.stores, restaurant);
+      for (const store of found.value.stores) {
+        discovery.stores.set(store.store_id, { name: store.name });
+      }
+    }
+  }
+  if (!storeId) return;
+  const storeName = discovery.stores.get(storeId)?.name ?? restaurant;
+  if (!storeName) return;
+  const menu = await args.doorDash.getMenu({ storeId, intent });
+  if (!menu.ok) return;
+  discovery.stores.set(storeId, { name: storeName });
+  discovery.menus.set(storeId, menu.value);
+  const items = matchDraftMenuItems(
+    menu.value,
+    artifact.kind === 'doordash_order' ? artifact.slots.items : undefined,
+  );
+  await persistDoorDashDraft(args, sessionState, {
+    storeId,
+    restaurant: storeName,
+    menuId: menu.value.menu_id,
+    ...(items.length > 0 ? { items } : {}),
+    ...(discovery.deliveryAddress ? { deliveryAddress: discovery.deliveryAddress } : {}),
+  });
+};
+
+const pickHydratedStoreId = (
+  stores: Array<{ store_id: string; name: string }>,
+  restaurant: string,
+): string | undefined => {
+  const normalize = (value: string) => value.toLocaleLowerCase().replace(/['’]/g, '');
+  const wanted = normalize(restaurant);
+  const exact = stores.find((store) => normalize(store.name) === wanted);
+  if (exact) return exact.store_id;
+  const named = stores.filter(
+    (store) => normalize(store.name).includes(wanted) || wanted.includes(normalize(store.name)),
+  );
+  if (named.length === 1) return named[0]?.store_id;
+  if (stores.length === 1) return stores[0]?.store_id;
+  return undefined;
+};
+
+const matchDraftMenuItems = (
+  menu: DoorDashMenu,
+  draftItems: ArtifactSlots['items'],
+): NonNullable<ArtifactSlots['items']> => {
+  if (!draftItems) return [];
+  return draftItems.flatMap((item) => {
+    const found =
+      menu.items.find((menuItem) => menuItem.item_id === item.itemId) ??
+      menu.items.find(
+        (menuItem) => menuItem.name.toLocaleLowerCase() === item.itemName.toLocaleLowerCase(),
+      );
+    if (!found) return [];
+    return [
+      {
+        itemId: found.item_id,
+        itemName: found.name,
+        quantity: item.quantity,
+        ...(item.nestedOptions ? { nestedOptions: item.nestedOptions } : {}),
+      },
+    ];
+  });
+};
+
+const summarizeReloadedDoorDashDiscovery = (
+  discovery: DoorDashDiscoveryState,
+  artifact: AgentArtifact | null,
+): string | null => {
+  const entry = discovery.menus.entries().next().value;
+  if (!entry) return null;
+  const [storeId, menu] = entry;
+  const store = discovery.stores.get(storeId);
+  const items = matchDraftMenuItems(
+    menu,
+    artifact?.kind === 'doordash_order' ? artifact.slots.items : undefined,
+  );
+  return [
+    'Reloaded DoorDash restaurant and menu from the active draft. Use these exact IDs. You may propose without searching again.',
+    JSON.stringify({
+      storeId,
+      restaurant: store?.name,
+      menuId: menu.menu_id,
+      deliveryAddress: discovery.deliveryAddress,
+      ...(items.length > 0 ? { items } : {}),
+    }),
+  ].join('\n');
+};
+
+const nestedOptionIdsWereDiscovered = (
+  nestedOptions: Array<Record<string, unknown>> | undefined,
+  discoveredIds: Set<string>,
+): boolean => {
+  if (!nestedOptions || nestedOptions.length === 0) return true;
+  return selectedOptionIds(nestedOptions).every((id) => discoveredIds.has(id));
+};
+
+const loadItemDetails = async (
+  doorDash: DdCliClient,
+  discovery: DoorDashDiscoveryState,
+  storeId: string,
+  menuId: string,
+  itemId: string,
+  rawText: string,
+): Promise<Result<{ ids: Set<string> } & ReturnType<typeof normalizeItemDetails>, string>> => {
+  let raw = discovery.itemDetails.get(itemId);
+  if (!raw) {
+    const fetched = await doorDash.getItemDetails({
+      storeId,
+      menuId,
+      itemId,
+      intent: buildDoorDashIntent(
+        'Help the workspace admin choose required DoorDash item options',
+        rawText,
+      ),
+    });
+    if (!fetched.ok) return err(doorDashToolError('DoorDash item details', fetched.error));
+    raw = fetched.value;
+    discovery.itemDetails.set(itemId, raw);
+  }
+  const details = normalizeItemDetails(raw);
+  return ok({ ...details, ids: itemOptionIds(details) });
+};
+
+const resolveSearchLocation = async (
+  doorDash: DdCliClient,
+  requestedAddress: string | null,
+  intent: string,
+  geocodeAddress: typeof geocodeUsAddress,
+): Promise<
+  Result<
+    | {
+        kind: 'resolved';
+        location: {
+          printableAddress: string;
+          lat: number;
+          lng: number;
+          source: 'saved' | 'found' | 'default';
+          addressId?: string;
+          placeId?: string;
+        };
+      }
+    | { kind: 'ambiguous'; candidates: AddressCandidate[] },
+    string
+  >
+> => {
+  const listed = await doorDash.listAddresses(intent);
+  if (!listed.ok) return err(doorDashToolError('DoorDash address lookup', listed.error));
+  if (requestedAddress) {
+    const saved = matchSavedAddress(listed.value.addresses, requestedAddress);
+    if (saved) {
+      const printable = savedAddressLabel(saved);
+      if (!printable)
+        return err(
+          'A matching saved DoorDash address has no display value. Support code: DD-ADDRESS.',
+        );
+      return ok({
+        kind: 'resolved',
+        location: {
+          printableAddress: printable,
+          lat: saved.lat,
+          lng: saved.lng,
+          source: 'saved',
+          addressId: savedAddressId(saved),
+        },
+      });
+    }
+    const found = await doorDash.findAddresses(requestedAddress, intent);
+    if (!found.ok) return err(doorDashToolError('DoorDash address find', found.error));
+    const picked = pickAddressCandidate(found.value.candidates, requestedAddress);
+    if (!picked) {
+      return ok({
+        kind: 'ambiguous',
+        candidates: found.value.candidates.slice(0, 5).map((candidate) => ({
+          place_id: candidate.place_id,
+          description: candidate.description,
+        })),
+      });
+    }
+    const geo = await geocodeAddress(picked.description);
+    if (!geo.ok) {
+      return err(
+        'I found that address on DoorDash but could not get map coordinates yet. Ask the user to confirm the exact candidate, then retry. Support code: DD-ADDRESS.',
+      );
+    }
+    return ok({
+      kind: 'resolved',
+      location: {
+        printableAddress: picked.description,
+        lat: geo.value.lat,
+        lng: geo.value.lng,
+        source: 'found',
+        placeId: picked.place_id,
+      },
+    });
+  }
+  const defaultAddress = listed.value.addresses.find((address) => address.is_default);
+  if (!defaultAddress) {
+    return err(
+      'No Slack delivery address was supplied and the DoorDash account has no default address. Ask the user for the street address. Support code: DD-ADDRESS.',
+    );
+  }
+  const printable = savedAddressLabel(defaultAddress);
+  if (!printable) {
+    return err(
+      'The DoorDash account default address has no usable display value. Ask the user for the street address. Support code: DD-ADDRESS.',
+    );
+  }
+  return ok({
+    kind: 'resolved',
+    location: {
+      printableAddress: printable,
+      lat: defaultAddress.lat,
+      lng: defaultAddress.lng,
+      source: 'default',
+    },
+  });
 };
 
 const callWithTimeout = async (

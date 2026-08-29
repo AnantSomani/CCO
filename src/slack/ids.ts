@@ -9,6 +9,7 @@ export const SUBCOMMAND_CHANNEL = 'channel' as const;
 export const SUBCOMMAND_BUDGET = 'budget' as const;
 export const SUBCOMMAND_OPT_OUTS = 'opt-outs' as const;
 export const SUBCOMMAND_HELP = 'help' as const;
+export const SUBCOMMAND_RECOVER = 'recover' as const;
 
 // ─── interactivity action_ids (block_actions buttons) ────────────────────────
 export const ACTION_APPROVE_EVENT = 'approve_event' as const;

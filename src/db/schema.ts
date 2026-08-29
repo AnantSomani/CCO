@@ -337,3 +337,39 @@ export const agentArtifacts = pgTable(
     index('agent_artifacts_reminder_due_idx').on(t.fireAt, t.status),
   ],
 );
+
+// ─── agent_doordash_executions ───────────────────────────────────────────────
+// Checkpointed DoorDash preview attempts. The cart UUID is written as soon as
+// Confetti creates a cart so retries resume instead of adding items twice.
+export const agentDoordashExecutions = pgTable(
+  'agent_doordash_executions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    actionId: uuid('action_id')
+      .notNull()
+      .unique()
+      .references(() => agentActions.id, { onDelete: 'cascade' }),
+    status: text('status').notNull().default('in_progress'),
+    checkpoint: text('checkpoint').notNull().default('started'),
+    storeId: text('store_id').notNull(),
+    cartUuid: text('cart_uuid'),
+    approvedMaxCents: integer('approved_max_cents').notNull(),
+    liveTotalCents: integer('live_total_cents'),
+    listedCartUuids: text('listed_cart_uuids').array().notNull().default(sql`'{}'::text[]`),
+    itemResults: jsonb('item_results').notNull().default(sql`'{}'::jsonb`),
+    quote: jsonb('quote'),
+    errorCode: text('error_code'),
+    cartIdempotencyKey: text('cart_idempotency_key').notNull(),
+    itemsIdempotencyKey: text('items_idempotency_key').notNull(),
+    previewIdempotencyKey: text('preview_idempotency_key').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('agent_doordash_executions_workspace_status_idx').on(t.workspaceId, t.status),
+    index('agent_doordash_executions_cart_idx').on(t.workspaceId, t.cartUuid),
+  ],
+);

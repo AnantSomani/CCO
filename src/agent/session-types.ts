@@ -57,7 +57,7 @@ export const artifactSlotsSchema = doorDashOrderSlotsSchema
   .extend(reminderSlotsSchema.shape);
 export type ArtifactSlots = z.infer<typeof artifactSlotsSchema>;
 
-const DOORDASH_REQUIRED = ['restaurant', 'deliveryAddress', 'estimatedCostCents'] as const;
+const DOORDASH_REQUIRED = ['restaurant', 'deliveryAddress'] as const;
 const EVENT_PLAN_REQUIRED = [
   'title',
   'eventAt',

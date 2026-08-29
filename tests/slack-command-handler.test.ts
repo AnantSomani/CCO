@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createAgentRun, insertAgentActions } from '@/db/queries/agent-operations';
+import {
+  getOrCreateDoorDashExecution,
+  updateDoorDashExecution,
+} from '@/db/queries/doordash-executions';
 import { getWorkspaceBySlackTeamId } from '@/db/queries/workspaces';
 import { users, workspaces } from '@/db/schema';
 import { ok } from '@/lib/result';
@@ -119,11 +124,79 @@ describe('handleSlashCommand', () => {
     expect(reply.text).toContain('Only a Confetti workspace admin');
     expect((await getWorkspaceBySlackTeamId(db, 'T123'))?.defaultBudgetCents).toBe(5000);
   });
+
+  it('lists DoorDash preview recovery without mutating carts', async () => {
+    const db = await createTestDb();
+    await seedWorkspace(db);
+    const reply = await handleSlashCommand(
+      {
+        db,
+        getSlackClient: async () => ok(slackClientStub),
+        log: silentLog,
+      },
+      { ...basePayload, text: 'recover' },
+    );
+    expect(reply.text).toMatch(/no DoorDash preview carts waiting for recovery/i);
+  });
+
+  it('lists a DoorDash preview that failed before a cart UUID was saved', async () => {
+    const db = await createTestDb();
+    await seedWorkspace(db);
+    const created = await createAgentRun(db, {
+      workspaceId: '00000000-0000-4000-8000-000000000001',
+      requestedBySlackUser: 'U123',
+      requestText: 'preview pizza',
+      idempotencyKey: 'recover-null-cart',
+    });
+    const [action] = await insertAgentActions(db, created.run, [
+      {
+        kind: 'doordash_order_preview',
+        summary: 'Preview pizza',
+        payload: {
+          storeId: 'store-1',
+          restaurant: 'Round Table Pizza',
+          menuId: 'menu-1',
+          items: [{ itemId: 'item-1', itemName: 'Gourmet Veggie', quantity: 2 }],
+          deliveryAddress: '123 Market St',
+          estimatedCostCents: 3200,
+        },
+        estimatedCostCents: 3200,
+      },
+    ]);
+    if (!action) throw new Error('missing action');
+    const execution = await getOrCreateDoorDashExecution(db, {
+      workspaceId: '00000000-0000-4000-8000-000000000001',
+      actionId: action.id,
+      storeId: 'store-1',
+      approvedMaxCents: 3200,
+    });
+    await updateDoorDashExecution(db, {
+      executionId: execution.id,
+      workspaceId: '00000000-0000-4000-8000-000000000001',
+      status: 'needs_review',
+      checkpoint: 'creating_cart',
+      errorCode: 'doordash_cart_items_need_review',
+    });
+
+    const reply = await handleSlashCommand(
+      {
+        db,
+        getSlackClient: async () => ok(slackClientStub),
+        log: silentLog,
+      },
+      { ...basePayload, text: 'recover' },
+    );
+
+    expect(reply.text).toContain(action.id);
+    expect(reply.text).toContain('no cart yet');
+    expect(reply.text).toContain('doordash_cart_items_need_review');
+  });
 });
 
 describe('shouldRunCommandAgent', () => {
   it('keeps known commands synchronous and routes natural language asynchronously', () => {
     expect(shouldRunCommandAgent('hello')).toBe(false);
+    expect(shouldRunCommandAgent('recover')).toBe(false);
     expect(shouldRunCommandAgent('budget 75')).toBe(false);
     expect(shouldRunCommandAgent('channel <#C999|celebrations>')).toBe(false);
     expect(shouldRunCommandAgent('what is our budget?')).toBe(true);

@@ -1,0 +1,20 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Sanitized DoorDash address-find response."
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "success": true,
+    "candidates": [
+      {
+        "place_id": "place-test-foxhurst",
+        "description": "1056 Foxhurst Way, San Jose, California 95120, United States"
+      }
+    ],
+    "count": 1,
+    "next_step": "Show the candidate to the user. Only after they confirm, save it with address add."
+  }
+}

@@ -7,7 +7,8 @@ UUIDs are synthetic. The root envelope and payload field names match inspected v
 When the pinned dd-cli version changes:
 
 1. Use a dedicated test DoorDash account.
-2. capture `--json-output` for each command represented in this directory;
+2. capture `--json-output` for each command represented in this directory, including
+   `restaurant-item-details` and a `cart add-items` required-options failure;
 3. replace every personal, location, store, item, cart, price, and account value with an obviously
    synthetic value while preserving types, field names, nesting, optional fields, and nullability;
 4. remove tokens, cookies, headers, URLs containing credentials, and unneeded free-form text;

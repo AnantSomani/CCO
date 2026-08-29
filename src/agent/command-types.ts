@@ -54,6 +54,8 @@ export const doorDashOrderPreviewPayloadSchema = z.object({
   items: z.array(doorDashOrderItemSchema).min(1).max(30),
   deliveryAt: z.string().datetime({ offset: true }).optional(),
   deliveryAddress: z.string().min(1).max(300),
+  placeId: z.string().min(1).max(400).optional(),
+  addressId: z.string().min(1).max(100).optional(),
   estimatedCostCents: z.number().int().positive().max(1_000_000),
 });
 

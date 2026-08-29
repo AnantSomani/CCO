@@ -302,6 +302,25 @@ export const completeAgentAction = async (
     .where(eq(agentActions.id, actionId));
 };
 
+export const resumeAgentActionExecution = async (
+  db: Db,
+  actionId: string,
+  workspaceId: string,
+): Promise<AgentAction | null> => {
+  const rows = await db
+    .update(agentActions)
+    .set({ status: 'executing', errorCode: null, updatedAt: new Date(), completedAt: null })
+    .where(
+      and(
+        eq(agentActions.id, actionId),
+        eq(agentActions.workspaceId, workspaceId),
+        or(eq(agentActions.status, 'failed'), eq(agentActions.status, 'executing')),
+      ),
+    )
+    .returning();
+  return rows[0] ? toAction(rows[0]) : null;
+};
+
 export const failAgentAction = async (
   db: Db,
   actionId: string,

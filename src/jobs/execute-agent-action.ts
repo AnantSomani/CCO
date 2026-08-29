@@ -20,6 +20,7 @@ import {
   createDdCliClient,
   type DdCliClient,
 } from '@/integrations/doordash/dd-cli-client';
+import { executeDoorDashPreview } from '@/jobs/doordash-preview';
 import { env } from '@/lib/env';
 import { err, ok, type Result } from '@/lib/result';
 import { buildAgentActionResolved } from '@/slack/blocks/agent-action';
@@ -47,11 +48,20 @@ export const runAgentAction = async ({
   doorDash,
   emitReminder,
   actionId,
-}: RunAgentActionArgs): Promise<Result<{ status: 'completed' | 'already_finished' }, string>> => {
+}: RunAgentActionArgs): Promise<
+  Result<{ status: 'completed' | 'already_finished' | 'needs_review' }, string>
+> => {
   const existing = await getAgentAction(db, actionId);
   if (!existing) return err(`agent action not found: ${actionId}`);
   if (['completed', 'rejected', 'cancelled'].includes(existing.status)) {
     return ok({ status: 'already_finished' });
+  }
+  if (
+    existing.status === 'failed' &&
+    existing.kind === 'doordash_order_preview' &&
+    isTerminalDoorDashError(existing.errorCode)
+  ) {
+    return ok({ status: 'needs_review' });
   }
 
   const workspace = await getWorkspaceById(db, existing.workspaceId);
@@ -70,6 +80,21 @@ export const runAgentAction = async ({
     emitReminder,
   );
   if (!execution.ok) {
+    if (execution.retry === false) {
+      await failAgentAction(db, action.id, execution.error);
+      await updateActionMessage(
+        slack.value,
+        action.confirmationChannelId,
+        action.confirmationMessageTs,
+        buildAgentActionResolved({
+          summary: action.summary,
+          status: 'failed',
+          detail: execution.detail,
+        }),
+      );
+      return ok({ status: 'needs_review' });
+    }
+    if (action.kind === 'doordash_order_preview') return err(execution.error);
     await failAgentAction(db, action.id, execution.error);
     await updateActionMessage(
       slack.value,
@@ -81,7 +106,7 @@ export const runAgentAction = async ({
         detail: `Nothing was changed. Error: ${execution.error}`,
       }),
     );
-    return execution;
+    return err(execution.error);
   }
 
   await completeAgentAction(db, action.id, execution.value);
@@ -100,6 +125,10 @@ export const runAgentAction = async ({
   return ok({ status: 'completed' });
 };
 
+type ActionExecution =
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; error: string; retry?: boolean; detail?: string };
+
 const execute = async (
   action: NonNullable<Awaited<ReturnType<typeof beginAgentActionExecution>>>,
   workspaceBudgetCents: number,
@@ -107,7 +136,7 @@ const execute = async (
   db: Db,
   doorDash?: DdCliClient,
   emitReminder?: ReminderEmitter,
-): Promise<Result<Record<string, unknown>, string>> => {
+): Promise<ActionExecution> => {
   switch (action.kind) {
     case 'set_default_budget': {
       const parsed = setDefaultBudgetPayloadSchema.safeParse(action.payload);
@@ -143,54 +172,50 @@ const execute = async (
     }
 
     case 'doordash_order_preview': {
-      if (!doorDash) return err('doordash_preview_disabled');
-      const parsed = doorDashOrderPreviewPayloadSchema.safeParse(action.payload);
-      if (!parsed.success) return err('invalid_doordash_preview_payload');
-      if (parsed.data.estimatedCostCents > workspaceBudgetCents) {
-        return err('estimate_exceeds_current_budget');
+      if (!doorDash) {
+        return {
+          ok: false,
+          error: 'doordash_preview_disabled',
+          retry: false,
+          detail: 'DoorDash preview is disabled in this environment. Nothing was changed.',
+        };
       }
-      const intent = buildDoorDashIntent(
-        'Help the workspace admin preview an approved team food order',
-        action.summary,
-      );
-      const existingCarts = await doorDash.listCarts({
+      const parsed = doorDashOrderPreviewPayloadSchema.safeParse(action.payload);
+      if (!parsed.success) {
+        return {
+          ok: false,
+          error: 'invalid_doordash_preview_payload',
+          retry: false,
+          detail: 'The approved preview payload was invalid. Nothing was changed.',
+        };
+      }
+      if (parsed.data.estimatedCostCents > workspaceBudgetCents) {
+        return {
+          ok: false,
+          error: 'estimate_exceeds_current_budget',
+          retry: false,
+          detail:
+            'The approved estimate is over the current workspace budget. Nothing was changed.',
+        };
+      }
+      return executeDoorDashPreview({
+        db,
+        doorDash,
+        workspaceId: action.workspaceId,
+        actionId: action.id,
         storeId: parsed.data.storeId,
-        intent,
-      });
-      if (!existingCarts.ok) return err(`doordash_cart_lookup_failed:${existingCarts.error}`);
-      if (existingCarts.value.carts.length > 0)
-        return err('doordash_existing_cart_requires_review');
-      const added = await doorDash.addItems({
-        storeId: parsed.data.storeId,
+        restaurant: parsed.data.restaurant,
         menuId: parsed.data.menuId,
         items: parsed.data.items,
-        intent,
-      });
-      if (!added.ok) return err(`doordash_cart_failed:${added.error}`);
-      if (
-        !added.value.success ||
-        !added.value.cart_uuid ||
-        (added.value.item_errors?.length ?? 0) > 0
-      ) {
-        return err('doordash_cart_items_need_review');
-      }
-      const preview = await doorDash.previewOrder({
-        cartUuid: added.value.cart_uuid,
-        scheduledTime: parsed.data.deliveryAt,
-        includeWorkBenefits: true,
-        intent,
-      });
-      if (!preview.ok) return err(`doordash_preview_failed:${preview.error}`);
-      if (!preview.value.success || !preview.value.quote) {
-        return err(`doordash_preview_unavailable:${preview.value.message ?? 'unknown'}`);
-      }
-      return ok({
-        previewOnly: true,
-        cartUuid: added.value.cart_uuid,
-        restaurant: parsed.data.restaurant,
+        deliveryAt: parsed.data.deliveryAt,
         deliveryAddress: parsed.data.deliveryAddress,
-        deliveryAt: parsed.data.deliveryAt ?? null,
-        quote: preview.value.quote,
+        placeId: parsed.data.placeId,
+        addressId: parsed.data.addressId,
+        approvedMaxCents: parsed.data.estimatedCostCents,
+        intent: buildDoorDashIntent(
+          'Help the workspace admin preview an approved team food order',
+          action.summary,
+        ),
       });
     }
 
@@ -342,12 +367,43 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined =>
     ? (value as Record<string, unknown>)
     : undefined;
 
+const isTerminalDoorDashError = (errorCode: string | null): boolean =>
+  errorCode === 'doordash_existing_cart_requires_review' ||
+  errorCode === 'doordash_cart_items_need_review' ||
+  errorCode === 'doordash_quote_exceeds_approved_maximum' ||
+  errorCode === 'doordash_cart_state_ambiguous' ||
+  errorCode === 'doordash_preview_already_recovered';
+
 export const executeAgentAction = inngest.createFunction(
   {
     id: 'execute-agent-action',
     retries: 3,
+    timeouts: { finish: '3m' },
     triggers: [{ event: EVENT_NAME_AGENT_ACTION_APPROVED }],
     singleton: { key: 'event.data.actionId', mode: 'skip' },
+    onFailure: async ({ event }) => {
+      const original = event.data.event;
+      const data = original.data as { actionId?: string };
+      if (!data.actionId) return;
+      const { db } = await import('@/db/client');
+      const { getSlackClient } = await import('@/slack/client');
+      const action = await getAgentAction(db, data.actionId);
+      if (!action || action.status !== 'executing') return;
+      await failAgentAction(db, action.id, 'retries_exhausted');
+      const slack = await getSlackClient(action.workspaceId);
+      if (!slack.ok) return;
+      await updateActionMessage(
+        slack.value,
+        action.confirmationChannelId,
+        action.confirmationMessageTs,
+        buildAgentActionResolved({
+          summary: action.summary,
+          status: 'failed',
+          detail:
+            'The DoorDash preview timed out or failed after retrying. No order was submitted. If a cart was created, use `/confetti recover` instead of editing the database.',
+        }),
+      );
+    },
   },
   async ({ event, step }) => {
     const data = event.data as { actionId?: string };

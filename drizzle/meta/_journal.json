@@ -64,6 +64,13 @@
       "when": 1787445264001,
       "tag": "0008_lucky_stryfe",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787447194743,
+      "tag": "0009_pale_madame_hydra",
+      "breakpoints": true
     }
   ]
 }

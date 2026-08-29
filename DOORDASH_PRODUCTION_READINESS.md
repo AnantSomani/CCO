@@ -105,8 +105,9 @@ as `hello`, `help`, `channel`, and `budget` are handled synchronously. Other com
 The `agent-command` Inngest function runs the admin agent. When
 `DOORDASH_EXECUTOR=dd-cli`, the agent receives DoorDash tools that can:
 
-- Read the DoorDash account's saved default address.
-- Search nearby restaurants.
+- Resolve a Slack-typed street address with a matching saved address or `address find`.
+- Search nearby restaurants at those coordinates. If no Slack address was supplied, use the
+  DoorDash account default.
 - Retrieve a restaurant menu.
 - Propose a `doordash_order_preview` action using exact identifiers returned during that run.
 
@@ -220,28 +221,22 @@ Required fix:
 - Include only the relevant bounded history in model calls.
 - Add explicit commands to cancel or restart a draft.
 
-### 3. Supplied addresses are ignored
+### 3. Mitigated: supplied addresses were ignored
 
-The current search tool always reads the DoorDash account's default saved address and uses its
-coordinates. A street address typed into Slack is not passed to dd-cli.
+Search used to read only the DoorDash account's default saved address. A street address typed into
+Slack was never sent to dd-cli, and the model told the user to change a DoorDash default that is
+not a consumer-app setting.
 
-This caused the model to provide a false explanation that DoorDash could not recognize the user's
-address. The address was never sent to DoorDash.
+Implemented mitigation:
 
-dd-cli v0.2.3 now provides:
-
-- `address find --query "<address>"`
-- `address add --place-id <id>`
-
-Recommended behavior:
-
-- Use `address find` to resolve a user-supplied address.
-- Show candidates when resolution is ambiguous.
-- Do not silently call `address add`, because it mutates the DoorDash account's default address.
-- If saving or changing the default address is required, represent it as a separately approved
-  action.
-- Prefer searching with resolved coordinates without changing account state when dd-cli supports
-  that path.
+- If the user typed an address, match a saved `address list` entry or call `address find`.
+- Search restaurants at the resolved coordinates. Never claim a typed address was searched until
+  resolution succeeded.
+- Show candidates when more than one address matches. Never tell the user to change a DoorDash
+  default themselves.
+- Discovery never calls `address add` or `address set`. After Slack approval of the preview,
+  execute may `address set` an already-saved address or `address add --yes` a confirmed
+  `place_id` so the cart delivers there.
 
 ### 4. Mitigated: agent invented explanations for tool failures
 
@@ -266,6 +261,20 @@ model noncompliance.
 Food-related requests now receive executor-aware acknowledgement text. Sandbox mode describes a
 sandbox order. DoorDash mode describes live DoorDash discovery, states that preview safety rules
 apply, and explicitly says no order will be submitted.
+
+### 6. Mitigated: later turns could not reuse DoorDash discovery
+
+Propose used to require restaurant and menu maps filled in the same `runAdminAgent` call.
+Search and menu results died when the Slack turn ended, so “go ahead” proposed remembered IDs
+and failed with “must come from this request’s discovery results.”
+
+Implemented mitigation:
+
+- Persist `storeId`, `menuId`, restaurant, and delivery address after search, menu, hydrate, and
+  propose.
+- At the start of each admin-agent run, reload the draft restaurant near the resolved address,
+  fetch its menu, and give the model those exact IDs.
+- If maps are still empty when proposing, hydrate once more before rejecting the proposal.
 
 ## Reliability and safety gaps
 
@@ -313,16 +322,26 @@ Required fix:
 ### Menu and customization handling
 
 - Agent-visible menus are truncated to 100 items.
-- Nested option validation checks identifier presence but does not fully validate option structure,
-  minimums, maximums, or incompatible combinations.
-- Partial `item_errors` are collapsed into a generic failure.
+- Nested option validation checks required groups (including extras nested under a chosen size)
+  and identifier presence. It does not fully validate incompatible combinations.
 
-Required fix:
+Implemented mitigation:
+
+- `restaurant-item-details` is fetched for each selected item before a preview can be proposed.
+- Required extras are read from the wrapped `item.extras` payload (`title`, `option_id`, and
+  nested extras under a chosen size). They block the proposal until the admin picks them in Slack.
+  A required group with exactly one choice is filled in automatically. A flat list of chosen
+  option names is rearranged under the selected size before validation.
+- `cart add-items` `item_errors` (including `required_options` and their choices) are shown in
+  Slack instead of a generic missing-cart-UUID message.
+- `/confetti recover` lists previews that failed before a cart UUID was saved.
+- A later approval may reuse a Confetti-owned cart UUID from a required-options failure instead of
+  treating that cart as an unknown user cart.
+
+Still open:
 
 - Add menu search/filtering or pagination.
-- Use `restaurant-item-details` when an item has required options.
-- Validate customization groups structurally.
-- Surface safe, specific item errors and ask focused follow-up questions.
+- Validate customization groups structurally beyond required-option presence.
 
 ## Authentication and secret management
 
@@ -651,9 +670,9 @@ DoorDash-only table.
 6. Approved reminders become `scheduled` artifacts with an explicit `fire_at` and fire once
    via the `agent-reminder` Inngest job. Idle sessions expire after 24 hours; closed
    sessions reuse 90-day audit retention.
-7. DoorDash follow-on still inside this phase: `address find` for a Slack-typed address.
-   Until that exists, discovery uses the connected DoorDash default address and must not
-   claim a typed address was searched.
+7. Slack-typed addresses resolve via a matching saved address or `address find`. Search uses
+   those coordinates. After Slack approval, execute sets or adds the address so the cart
+   delivers there. Discovery never tells the user to change a DoorDash default themselves.
 8. Store stable DoorDash identifiers only after they are returned by discovery; do not allow
    the model to invent store, item, or customization IDs.
 
@@ -679,6 +698,9 @@ DoorDash-only table.
 ### Phase 2: Make cart execution idempotent and recoverable
 
 **Depends on:** Phase 1.
+**Status:** implemented. Preview retries resume from persisted cart UUIDs and checkpoints.
+Operators recover timed-out or orphaned Confetti carts with `/confetti recover` instead of
+editing database rows.
 
 **Objective:** guarantee that approving or retrying a preview action creates at most one intended
 cart mutation, enforces the approved limit, and leaves enough durable state for safe recovery.
@@ -871,7 +893,7 @@ For a multi-customer launch, also require:
 2. Close Phase 0 after the controlled preview passes and commit the verified DoorDash scaffold and
    Phase 0 work as one coherent checkpoint.
 3. Add persisted DoorDash order drafts and route admin DM replies to them.
-4. Use `address find` for supplied addresses; never pretend an ignored address was searched.
+4. Done: use `address find` for supplied addresses; never pretend an ignored address was searched.
 5. Persist cart UUIDs and implement retry/resume behavior.
 6. Enforce the approved maximum against the live quote.
 7. Decide between:

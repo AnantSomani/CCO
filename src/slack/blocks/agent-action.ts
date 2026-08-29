@@ -51,7 +51,7 @@ export const buildAgentActionConfirmation = (
     : '';
   const previewOnly =
     action.kind === 'doordash_order_preview'
-      ? '\n:warning: *Preview only:* approval creates or changes a DoorDash cart and retrieves a live quote. It cannot submit an order or charge a payment method.'
+      ? '\n:warning: *Preview only:* approval may set the delivery address on the connected DoorDash account, create or change a cart, and retrieve a live quote. It cannot submit an order or charge a payment method.'
       : '';
   const safeSummary = escapeMrkdwn(action.summary);
   const text = `Approval required: ${action.summary}`;
@@ -129,9 +129,17 @@ const formatActionDetails = (kind: AgentActionKind, payload: unknown): string =>
       if (!parsed.success) return 'Invalid DoorDash preview payload';
       return [
         `*Restaurant:* ${escapeMrkdwn(parsed.data.restaurant)}`,
-        `*Items:* ${parsed.data.items.map((item) => `${item.quantity}× ${escapeMrkdwn(item.itemName)}`).join(', ')}`,
+        `*Items:* ${parsed.data.items
+          .map((item) => {
+            const options = (item.nestedOptions ?? [])
+              .map((option) => (typeof option.name === 'string' ? option.name : null))
+              .filter((name): name is string => Boolean(name));
+            const suffix = options.length > 0 ? ` (${escapeMrkdwn(options.join(', '))})` : '';
+            return `${item.quantity}× ${escapeMrkdwn(item.itemName)}${suffix}`;
+          })
+          .join(', ')}`,
         `*Delivery:* ${escapeMrkdwn(parsed.data.deliveryAt ?? 'ASAP')}`,
-        `*DoorDash default address:* ${escapeMrkdwn(parsed.data.deliveryAddress)}`,
+        `*Delivery address:* ${escapeMrkdwn(parsed.data.deliveryAddress)}`,
       ].join('\n');
     }
     case 'sandbox_event_plan': {

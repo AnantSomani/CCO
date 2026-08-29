@@ -1,0 +1,45 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Sanitized DoorDash restaurant-item-details response."
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "success": true,
+    "item": {
+      "item_id": "item-test-1",
+      "name": "Test Gourmet Veggie",
+      "has_required_modifiers": true,
+      "extras": [
+        {
+          "extra_id": "e-size-test",
+          "title": "Size",
+          "min_num_options": 1,
+          "max_num_options": 1,
+          "options": [
+            {
+              "option_id": "opt-size-large",
+              "name": "Large",
+              "price": 18,
+              "extras": [
+                {
+                  "extra_id": "e-crust-test",
+                  "title": "Crust",
+                  "min_num_options": 1,
+                  "max_num_options": 1,
+                  "options": [
+                    { "option_id": "opt-crust-original", "name": "Original" },
+                    { "option_id": "opt-crust-thin", "name": "Thin" }
+                  ]
+                }
+              ]
+            },
+            { "option_id": "opt-size-medium", "name": "Medium", "price": 14, "extras": [] }
+          ]
+        }
+      ]
+    }
+  }
+}
